@@ -173,6 +173,157 @@ public sealed class CliSmokeTests : IDisposable
     }
 
     [Fact]
+    public async Task Agents_named_together_pass_a_message_between_them_and_each_reply_is_shown()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nwhat do you think?"));
+        _harness.InstallAgent("codex", CodexReply("fine by me"));
+
+        var output = await _harness.ChatAsync(["start"], "@claude @codex agree on a plan", "/exit");
+
+        AssertShown("Waiting for Claude... (turn 1 of 6, Ctrl+C to stop the exchange)", output);
+        AssertShown("Claude to Codex: @codex what do you think?", output);
+        AssertShown("Waiting for Codex... (turn 2 of 6, Ctrl+C to stop the exchange)", output);
+        AssertNotShown("not delivered", output);
+        AssertShown("Codex: fine by me", output);
+        Assert.Single(_harness.Invocations("claude"));
+        Assert.Single(_harness.Invocations("codex"));
+        var sent = _harness.StandardInput("codex");
+        Assert.Contains("""<message from="User" kind="human" to="Claude">@claude @codex agree on a plan</message>""", sent);
+        Assert.Contains("""<message from="Claude" kind="agent" to="Codex">@codex&#10;what do you think?</message>""", sent);
+        Assert.EndsWith("Claude addressed the last message above to you.", sent.TrimEnd());
+    }
+
+    [Fact]
+    public async Task Agent_that_addresses_an_agent_the_user_did_not_name_starts_no_turn()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\ntake over"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var output = await _harness.ChatAsync(["start"], "@claude please ask @codex about this", "@claude @Override is missing here", "/exit");
+
+        AssertShown("Claude: @codex take over", output);
+        AssertNotShown("Claude to Codex", output);
+        AssertNotShown("No agent named", output);
+        Assert.EndsWith("@Override is missing here", _harness.StandardInput("claude").TrimEnd());
+        Assert.Equal(2, _harness.Invocations("claude").Count);
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Reply_for_the_user_that_begins_by_naming_the_other_agent_ends_the_exchange()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("@codex and I would both use a channel."));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var output = await _harness.ChatAsync(["start"], "@claude @codex agree on a plan", "/exit");
+
+        AssertShown("Claude: @codex and I would both use a channel.", output);
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Agents_that_keep_addressing_each_other_are_stopped_after_six_turns()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nand you?"));
+        _harness.InstallAgent("codex", CodexReply(@"@claude\nand you?"));
+
+        var output = await _harness.ChatAsync(["start"], "@claude @codex discuss", "/exit");
+
+        AssertShown("Stopped after 6 agent turns, the limit for one exchange. Codex's last message was addressed to Claude and was not delivered.", output);
+        Assert.Equal(3, _harness.Invocations("claude").Count);
+        Assert.Equal(3, _harness.Invocations("codex").Count);
+    }
+
+    [Fact]
+    public async Task Pause_mode_holds_a_handover_until_go_and_an_empty_line_does_not_send_it()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nwhat do you think?"));
+        _harness.InstallAgent("codex", CodexReply("fine by me"));
+
+        var output = await _harness.ChatAsync(["start"], "/pause on", "@claude @codex agree", "", "/go", "/exit");
+
+        AssertShown("Pause mode is on:", output);
+        AssertShown("Paused. /go sends this to Codex, /stop ends the exchange, anything else goes back to Claude as your message.", output);
+        AssertShown("Codex: fine by me", output);
+        Assert.Equal(2, output.Split("Paused.").Length - 1);
+        Assert.Single(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Near_miss_commands_at_a_pause_are_refused_and_never_sent_to_an_agent()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nwhat do you think?"));
+        _harness.InstallAgent("codex", CodexReply("fine by me"));
+
+        var output = await _harness.ChatAsync(["start"], "/pause on", "@claude @codex agree", "/go ahead", "/stop now", "/go.", "/history", "@codex go on", "/go", "/exit");
+
+        AssertShown("/go ahead is not a command here.", output);
+        AssertShown("/stop now is not a command here.", output);
+        AssertShown("/go. is not a command here.", output);
+        AssertShown("/history is not a command here.", output);
+        AssertShown("What you type here goes to Claude, not to Codex. Type /go to send Claude's message on.", output);
+        AssertShown("Codex: fine by me", output);
+        Assert.Single(_harness.Invocations("claude"));
+        Assert.Single(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Pause_is_set_explicitly_and_is_never_recorded_as_a_message()
+    {
+        InstallBothAgents();
+
+        var output = await _harness.ChatAsync(["start"], "/pause", "/pause on", "/pause", "/pause maybe", "/pause off", "/pause", "/history", "/exit");
+
+        AssertShown("Pause mode is off. Use /pause on or /pause off.", output);
+        AssertShown("Pause mode is on: when one agent addresses another", output);
+        AssertShown("Pause mode is on. Use /pause on or /pause off.", output);
+        AssertShown("Pause mode is still on. Use /pause on or /pause off.", output);
+        AssertShown("Pause mode is off: agents you name together", output);
+        AssertNotShown("You: /pause", output);
+        AssertNotShown("Recorded.", output);
+    }
+
+    [Fact]
+    public async Task Help_only_suggests_an_exchange_between_agents_that_are_available()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var oneAgent = await _harness.ChatAsync(["start"], "/help", "/exit");
+        _harness.InstallAgent("codex", CodexReply("unused"));
+        var twoAgents = await _harness.ChatAsync(["start"], "/help", "/exit");
+
+        AssertNotShown("@claude @codex <message>", oneAgent);
+        AssertShown("@claude @codex <message>", twoAgents);
+    }
+
+    [Fact]
+    public async Task Stopping_at_a_pause_or_running_out_of_input_delivers_nothing()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nwhat do you think?"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var stopped = await _harness.ChatAsync(["start"], "/pause on", "@claude @codex agree", "/stop", "/exit");
+        var inputEnded = await _harness.ChatAsync(["start"], "/pause on", "@claude @codex agree");
+
+        AssertShown("Stopped. Claude's message to Codex was not delivered.", stopped);
+        AssertShown("Stopped. Claude's message to Codex was not delivered.", inputEnded);
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Text_typed_at_a_pause_goes_back_to_the_author_and_not_to_the_other_agent()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nwhat do you think?"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        await _harness.ChatAsync(["start"], "/pause on", "@claude @codex agree", "make it shorter", "/stop", "/exit");
+
+        Assert.Equal(2, _harness.Invocations("claude").Count);
+        Assert.EndsWith("make it shorter", _harness.StandardInput("claude").TrimEnd());
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Fact]
     public async Task Restarted_agent_starts_a_new_conversation_but_is_shown_the_room_again()
     {
         InstallBothAgents();
@@ -212,6 +363,23 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Unknown command /frobnicate. Type /help.", output);
         Assert.Empty(_harness.Invocations("claude"));
         Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Fact]
+    public async Task Line_that_starts_with_a_command_word_is_never_recorded_as_a_message()
+    {
+        InstallBothAgents();
+
+        var output = await _harness.ChatAsync(["start"], "/frobnicate now", "/help me", "/exit now", "/usr is full", "/etc/hosts looks wrong", "/history", "/exit");
+
+        AssertShown("Unknown command /frobnicate now. Type /help. A line that starts with /word is never sent as a message.", output);
+        AssertShown("Unknown command /help me.", output);
+        AssertShown("Unknown command /exit now.", output);
+        AssertShown("Unknown command /usr is full.", output);
+        AssertShown("You: /etc/hosts looks wrong", output);
+        Assert.Equal(1, output.Split("Recorded.").Length - 1);
+        AssertNotShown("You: /frobnicate", output);
+        AssertNotShown("You: /usr", output);
     }
 
     [Fact]

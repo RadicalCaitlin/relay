@@ -30,6 +30,9 @@ internal sealed class StartCommand(
     private readonly ManualResetEventSlim _idle = new(initialState: true);
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
+    private bool _pause;
+    private Task<string?>? _read;
+    private bool _readInterrupted;
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
@@ -127,7 +130,7 @@ internal sealed class StartCommand(
         while (!cancellationToken.IsCancellationRequested)
         {
             console.Markup("[bold green]You:[/] ");
-            var input = Console.ReadLine()?.Trim();
+            var input = ReadLine();
             if (input is null)
                 return;
             if (input.Length == 0)
@@ -159,15 +162,31 @@ internal sealed class StartCommand(
                 case var command when command.StartsWith("/reset "):
                     Reset(room, command["/reset ".Length..].Trim().TrimStart('@'), keepRoom: false);
                     break;
+                // Never a toggle: typing it twice must not quietly turn a safety setting off.
+                case "/pause":
+                    console.MarkupLine($"[dim]Pause mode is {(_pause ? "on" : "off")}. Use /pause on or /pause off.[/]");
+                    break;
+                case "/pause on":
+                    _pause = true;
+                    console.MarkupLine("[dim]Pause mode is on: when one agent addresses another, Relay asks you before passing the message on.[/]");
+                    break;
+                case "/pause off":
+                    _pause = false;
+                    console.MarkupLine("[dim]Pause mode is off: agents you name together pass messages to each other without asking.[/]");
+                    break;
+                case var command when command.StartsWith("/pause "):
+                    console.MarkupLine($"[yellow]Pause mode is still {(_pause ? "on" : "off")}. Use /pause on or /pause off.[/]");
+                    break;
                 case "/restart":
                     Reset(room, target: null, keepRoom: true);
                     break;
                 case var command when command.StartsWith("/restart "):
                     Reset(room, command["/restart ".Length..].Trim().TrimStart('@'), keepRoom: true);
                     break;
-                // Only a bare /word is a mistyped command; "/etc/hosts looks wrong" is a message.
-                case ['/', .. var name] when name.All(char.IsAsciiLetter):
-                    console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help.[/]");
+                // A line whose first word is /word was meant as a command, with or without arguments, and a
+                // mistyped one must not be recorded for every agent to read. "/etc/hosts looks wrong" is a message.
+                case var command when command.Split([' ', '\t'], 2)[0] is ['/', .. var name] && name.All(char.IsAsciiLetter):
+                    console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help. A line that starts with /word is never sent as a message.[/]");
                     break;
                 default:
                     await SendAsync(room, input, cancellationToken);
@@ -186,19 +205,24 @@ internal sealed class StartCommand(
         try
         {
             AgentParticipant? recipient = null;
-            var result = await router.SendHumanMessageAsync(
-                room,
-                input,
-                agent =>
+            var events = new ExchangeEvents
+            {
+                TurnStarting = starting =>
                 {
-                    recipient = agent;
-                    console.MarkupLine($"[dim]Waiting for {Markup.Escape(agent.DisplayName)}... (Ctrl+C to cancel)[/]");
+                    recipient = starting.Agent;
+                    var name = Markup.Escape(starting.Agent.DisplayName);
+                    console.MarkupLine(starting.TurnLimit > 1
+                        ? $"[dim]Waiting for {name}... (turn {starting.Turn} of {starting.TurnLimit}, Ctrl+C to stop the exchange)[/]"
+                        : $"[dim]Waiting for {name}... (Ctrl+C to cancel)[/]");
                 },
-                turn.Token);
+                Recorded = message => WriteMessage(room, message),
+                Pause = _pause ? (handover, addressee) => AskAboutHandover(room, handover, addressee, turn.Token) : null,
+            };
 
-            if (result.Reply is { } reply)
-                WriteMessage(room, reply);
-            else
+            // One token for the whole exchange, so Ctrl+C between two agents' turns still stops it.
+            var result = await router.SendHumanMessageAsync(room, input, events, turn.Token);
+
+            if (result.Reason == StopReason.NotAddressed)
                 console.MarkupLine("[dim]Recorded. Agents will see it the next time you address them, e.g. @claude hello[/]");
 
             if (recipient?.State == AgentSessionState.Faulted)
@@ -208,6 +232,91 @@ internal sealed class StartCommand(
         {
             _turn = null;
             _idle.Set();
+        }
+    }
+
+    // A read of the console cannot be abandoned. One that was interrupted is kept, and the line it
+    // eventually returns answers the next prompt instead of being lost.
+    /// <exception cref="OperationCanceledException">Cancelled while waiting for a line.</exception>
+    private string? ReadLine(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            var read = _read ??= Task.Run(Console.ReadLine);
+            try
+            {
+                read.Wait(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _readInterrupted = true;
+                throw;
+            }
+
+            _read = null;
+            var interrupted = _readInterrupted;
+            _readInterrupted = false;
+
+            // On Windows, Ctrl+C makes the read in progress return as if input had ended. After an
+            // interrupted read that is not the end of input, so read again.
+            var line = read.Result;
+            if (line is null && interrupted)
+                continue;
+
+            return line?.Trim();
+        }
+    }
+
+    // Pause mode: a handover waits here until the user sends it on, stops, or asks its author for another.
+    private HandoverDecision AskAboutHandover(ChatRoom room, ChatMessage handover, AgentParticipant addressee, CancellationToken cancellationToken)
+    {
+        var author = Markup.Escape(room.FindParticipant(handover.SenderId)?.DisplayName ?? handover.SenderId);
+        var recipient = Markup.Escape(addressee.DisplayName);
+        while (true)
+        {
+            console.MarkupLine($"[dim]Paused. /go sends this to {recipient}, /stop ends the exchange, anything else goes back to {author} as your message.[/]");
+            console.Markup("[bold green]You:[/] ");
+
+            // No agent is running while the question is open, so a shutdown has nothing to wait for.
+            string? input;
+            _idle.Set();
+            try
+            {
+                input = ReadLine(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                console.WriteLine();
+                return new HandoverDecision.Stop();
+            }
+            finally
+            {
+                _idle.Reset();
+            }
+
+            if (input is null)
+                return new HandoverDecision.Stop();
+
+            switch (input.ToLowerInvariant())
+            {
+                case "/stop":
+                    return new HandoverDecision.Stop();
+                case "/go":
+                    return new HandoverDecision.Deliver();
+                // An empty line never sends: a key pressed during the turn before must not approve a message nobody has read.
+                case "":
+                    break;
+                // Anything that looks like a command is never sent to an agent: "/go ahead" must not cost a turn.
+                case ['/', ..]:
+                    console.MarkupLine($"[yellow]{Markup.Escape(input)} is not a command here. Type /go or /stop on its own, or a message for {author} that does not start with /.[/]");
+                    break;
+                // Nor is a line addressed to somebody else, which was probably meant to send the handover on.
+                case var _ when Mention.TryParse(input, out var target, out _) && room.FindParticipant(target) is { } named && named.Id != handover.SenderId:
+                    console.MarkupLine($"[yellow]What you type here goes to {author}, not to {Markup.Escape(named.DisplayName)}. Type /go to send {author}'s message on.[/]");
+                    break;
+                default:
+                    return new HandoverDecision.SendBack(input);
+            }
         }
     }
 
@@ -288,9 +397,12 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/clear[/]     Clear the display (history is kept)");
         console.MarkupLine("[bold]/restart[/]   Start new agent conversations, keeping what was said in the room (/restart <agent> for one)");
         console.MarkupLine("[bold]/reset[/]     Start new agent conversations from a clean slate (/reset <agent> for one)");
+        console.MarkupLine($"[bold]/pause[/]     Ask before one agent's message is passed to another: /pause on or /pause off (now {(_pause ? "on" : "off")})");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)
             console.MarkupLine($"[bold]@{Markup.Escape(participant.Id)} <message>[/]  Send a message to {Markup.Escape(participant.DisplayName)}");
+        if (room.Participants.Where(p => p.Session is not null).ToList() is [var first, var second, ..])
+            console.MarkupLine($"[bold]@{Markup.Escape(first.Id)} @{Markup.Escape(second.Id)} <message>[/]  Send it to {Markup.Escape(first.DisplayName)}, and let the agents named pass messages to each other. Only the first one is asked; the others speak if they are addressed.");
         console.MarkupLine("[dim]Everything said in this room, by you or by an agent, is shown to each agent the next time you address it.[/]");
     }
 
@@ -304,7 +416,8 @@ internal sealed class StartCommand(
                 break;
             case SenderType.Agent:
                 var name = room.FindParticipant(message.SenderId)?.DisplayName ?? message.SenderId;
-                console.MarkupLine($"[bold aqua]{Markup.Escape(name)}:[/] {content}");
+                var to = message.TargetId is { } id && room.FindParticipant(id) is { } addressee ? $" to {addressee.DisplayName}" : string.Empty;
+                console.MarkupLine($"[bold aqua]{Markup.Escape(name + to)}:[/] {content}");
                 break;
             case SenderType.System:
                 console.MarkupLine($"[yellow]! {content}[/]");

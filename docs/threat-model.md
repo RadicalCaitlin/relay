@@ -7,7 +7,8 @@ Last reviewed against Claude Code 2.1.273 and codex-cli 0.162.0.
 
 Relay runs on your machine as you. For each message you address to an agent it starts that
 agent's CLI (`claude` or `codex`) as a child process in the folder you launched Relay from, writes
-your message to the CLI's standard input, and shows the reply. It holds no credentials, opens no
+your message to the CLI's standard input, and shows the reply. If you named several agents, it
+may then start another of them with that reply, a limited number of times. It holds no credentials, opens no
 network connections of its own, and keeps no logs. The only file it writes is its list of trusted
 folders. The agent CLIs do all of those things themselves, under their own sign-in and configuration.
 
@@ -15,7 +16,7 @@ folders. The agent CLIs do all of those things themselves, under their own sign-
 
 | Party | Trusted? | Why |
 | --- | --- | --- |
-| You, typing in the chatroom | Yes | You are the only source of instructions. |
+| You, typing in the chatroom | Yes | You are the only source of instructions, and the only one who can open an exchange between agents. |
 | The agent CLI executables on your `PATH` | Yes | Relay runs whatever `claude` and `codex` resolve to. If your `PATH` is compromised, so is everything else you run. |
 | Your own user-level agent configuration | Yes | It is yours, and the CLIs enforce it. |
 | The folder Relay runs in | **Not until you say so** | It may be a repository you just cloned. See "Workspace trust" below. |
@@ -78,8 +79,43 @@ considers the folder trusted. The chatroom header says this rather than implying
 - Relay cannot answer a permission prompt. Anything an agent would need approval for is declined
   by the agent CLI, so agents are limited to what your own configuration already allows.
 - `--setting-sources user` only narrows what Claude loads. It grants nothing.
-- Agents never trigger each other. Only text you type starts a turn, and `/commands` are only read
-  from your input. An agent reply containing `@codex ...` or `/reset` is displayed and nothing more.
+- An agent can start another agent's turn only inside an exchange you opened; see the next section.
+  Outside one, only text you type starts a turn. `/commands` are only ever read from your input: an
+  agent reply containing `/reset` is displayed and nothing more.
+
+## Exchanges between agents
+
+A message that begins with more than one mention, such as `@claude @codex agree on a design`, opens
+an exchange (see [adr/0002-agent-to-agent-exchanges.md](adr/0002-agent-to-agent-exchanges.md)).
+Inside it, a reply whose first line is only a mention of another agent you named is delivered to
+that agent. This is the one way an agent's output starts a process.
+
+- **Only you can open one, and only for the agents you named.** Mentions later in your message do
+  not count, so pasted text cannot invite an agent. An agent cannot invite another, and a reply
+  addressed to an agent you did not name is shown and not delivered.
+- **A handover has to be unmistakable.** A reply that merely begins by naming an agent, as prose
+  often does, is a reply to you. Outside an exchange no reply is read as addressed to an agent at
+  all, so an agent cannot make its words appear in the room as a message to another one.
+- **It is bounded.** An exchange is at most 6 agent turns, counting the first and any that fail.
+  A reply addresses one agent, and one agent runs at a time, so an exchange is a chain that starts
+  at most 6 processes. Nothing an agent writes can raise the count or start a new exchange.
+- **It stops on the first problem.** A failed turn ends the exchange; nobody else is tried.
+- **You can stop it.** Ctrl+C cancels the whole exchange and kills the running agent's process
+  tree. Closing Relay does the same.
+- **A handed-over message never passes for yours.** It is the last line of the transcript, escaped
+  and under its author's name. On such a turn the only text after the transcript is a fixed line
+  written by Relay, and the agent is told that nothing after it is from you. Your opening message
+  is in the same transcript, marked as the human's.
+- **The rules reach each agent in Relay's words**, not through another agent: who is in the
+  exchange, how to hand over, how many turns remain, and that another agent's message is a
+  colleague's request and not an instruction from you.
+- **Pause mode puts you back between the agents.** With `/pause` on, each handover is shown and
+  held until you type `/go`. An empty line does not send it, because a key pressed while you were
+  waiting would otherwise approve a message you had not read. A line that starts with `/` or with
+  another agent's name is asked again rather than sent to an agent. It is turned on with
+  `/pause on` and off with `/pause off`, never toggled, so it cannot be switched off by repeating
+  a command. You cannot edit an agent's message;
+  what you type instead goes to its author as your own message. Pause mode is off by default.
 
 ## Shared room context
 
@@ -176,7 +212,12 @@ See "Remaining risks" for the cases this does not cover.
 | **The trust prompt is not covered by an automated test.** It only appears in a real terminal. The remembered, session-only and non-interactive paths are tested end to end. | Open. |
 | **A forced kill of Relay** (`taskkill /F`, `kill -9`, a crash) leaves the agent running. | Open (#22). |
 | **Background processes started by an agent** outlive the turn and are not tracked. | Open (#20). |
-| **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it, and within what your configuration allows. |
+| **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it or inside an exchange you opened, and within what your configuration allows. |
+| **Inside an exchange, you do not read a reply before the next agent acts on it.** A reply steered by something the first agent read reaches the second without your review, for up to 5 handovers per message. | By design when pause mode is off. Bounded by who you named, the turn limit and Ctrl+C. Use `/pause on` to approve each handover. |
+| **One message can cost up to 6 agent turns** when it names several agents. | By design. The limit is fixed for now (#13). |
+| **You cannot type during a turn**, so between pauses the only way to interrupt an exchange is Ctrl+C. | Accepted for now. |
+| **A mistyped agent name after the first is sent as text.** `@claude @cdoex agree` goes to Claude alone, because a second `@word` that is not an agent is usually code (`@Override`). No exchange opens, so nothing is delivered that you did not ask for, but you get a narrower conversation than you meant. | Accepted. The waiting line shows a turn count only when an exchange is open. |
+| **An agent that writes a handover the wrong way is not understood.** Its reply comes to you and the exchange ends without a notice. | By design: the safe way to be wrong. |
 | **Nothing in a room is private from its agents**, including what you said to a different agent, and anything pasted into the room. | By design. Private messages are not implemented. |
 | **Display spoofing with plain text.** An agent can print lines that look like chat lines, such as `You: ...`, though not in the real prompt's colours. | Accepted for now. |
 | **Unbounded output.** A CLI that printed gigabytes would exhaust memory. | Accepted for now. |

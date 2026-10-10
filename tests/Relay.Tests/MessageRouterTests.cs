@@ -45,7 +45,8 @@ public class MessageRouterTests
 
         var result = await _router.SendHumanMessageAsync(_room, "hello everyone");
 
-        Assert.Null(result.Reply);
+        Assert.Empty(result.Exchange);
+        Assert.Equal(StopReason.NotAddressed, result.Reason);
         Assert.Empty(session.Received);
         var message = Assert.Single(_room.Messages);
         Assert.Equal(SenderType.Human, message.SenderType);
@@ -64,7 +65,8 @@ public class MessageRouterTests
         Assert.Equal(["say hello"], claude.Received);
         Assert.Empty(codex.Received);
         Assert.Equal("claude", result.Message.TargetId);
-        var reply = Assert.IsType<ChatMessage>(result.Reply);
+        var reply = Assert.Single(result.Exchange);
+        Assert.Equal(StopReason.RepliedToUser, result.Reason);
         Assert.Equal([result.Message, reply], _room.Messages);
         Assert.Equal(SenderType.Agent, reply.SenderType);
         Assert.Equal("claude", reply.SenderId);
@@ -77,9 +79,10 @@ public class MessageRouterTests
         AddAgent("claude", new FakeSession("@codex please take over"));
         var codex = AddAgent("codex");
 
-        await _router.SendHumanMessageAsync(_room, "@claude hi");
+        var result = await _router.SendHumanMessageAsync(_room, "@claude hi");
 
         Assert.Empty(codex.Received);
+        Assert.Equal(StopReason.RepliedToUser, result.Reason);
         Assert.Equal(2, _room.Messages.Count);
     }
 
@@ -90,8 +93,9 @@ public class MessageRouterTests
 
         var result = await _router.SendHumanMessageAsync(_room, "@codex hi");
 
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
-        Assert.Equal("Codex is unavailable: 'codex' was not found on PATH.", result.Reply.Content);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
+        Assert.Equal("Codex is unavailable: 'codex' was not found on PATH.", notice.Content);
         Assert.Equal(2, _room.Messages.Count);
     }
 
@@ -102,9 +106,10 @@ public class MessageRouterTests
 
         var result = await _router.SendHumanMessageAsync(_room, "@gemini hi");
 
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
-        Assert.Contains("@gemini", result.Reply.Content);
-        Assert.Contains("@claude", result.Reply.Content);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
+        Assert.Contains("@gemini", notice.Content);
+        Assert.Contains("@claude", notice.Content);
         Assert.Equal("gemini", result.Message.TargetId);
     }
 
@@ -116,7 +121,7 @@ public class MessageRouterTests
         var dispatched = new List<string>();
 
         foreach (var text in new[] { "hello", "@gemini hi", "@codex hi", "@claude", "@claude hi" })
-            await _router.SendHumanMessageAsync(_room, text, agent => dispatched.Add(agent.Id));
+            await _router.SendHumanMessageAsync(_room, text, new() { TurnStarting = starting => dispatched.Add(starting.Agent.Id) });
 
         Assert.Equal(["claude"], dispatched);
     }
@@ -129,7 +134,8 @@ public class MessageRouterTests
         var result = await _router.SendHumanMessageAsync(_room, "@claude");
 
         Assert.Empty(session.Received);
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
     }
 
     [Fact]
@@ -139,8 +145,9 @@ public class MessageRouterTests
 
         var result = await _router.SendHumanMessageAsync(_room, "@claude hi");
 
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
-        Assert.Equal("CLAUDE failed: Not logged in", result.Reply.Content);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
+        Assert.Equal("CLAUDE failed: Not logged in", notice.Content);
     }
 
     [Fact]
@@ -150,8 +157,9 @@ public class MessageRouterTests
 
         var result = await _router.SendHumanMessageAsync(_room, "@claude hi");
 
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
-        Assert.Equal("CLAUDE failed unexpectedly (InvalidOperationException): provider bug", result.Reply.Content);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
+        Assert.Equal("CLAUDE failed unexpectedly (InvalidOperationException): provider bug", notice.Content);
         Assert.Equal(2, _room.Messages.Count);
     }
 
@@ -169,7 +177,8 @@ public class MessageRouterTests
         cts.Cancel();
         var result = await pending;
 
-        Assert.Equal(SenderType.System, result.Reply!.SenderType);
-        Assert.Contains("cancelled", result.Reply.Content);
+        var notice = Assert.Single(result.Exchange);
+        Assert.Equal(SenderType.System, notice.SenderType);
+        Assert.Contains("cancelled", notice.Content);
     }
 }

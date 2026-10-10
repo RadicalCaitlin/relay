@@ -53,6 +53,49 @@ public sealed class ChatSignalTests : IDisposable
         await Poll.UntilAsync(() => !Poll.IsRunning(child), "the agent's child process is gone");
     }
 
+    [UnixFact]
+    public async Task Interrupt_at_a_pause_cancels_the_exchange_and_the_next_line_typed_is_still_read()
+    {
+        var relay = await StartAndWaitForPauseAsync();
+
+        Signal("INT", relay.Id);
+
+        await Poll.UntilAsync(() => _harness.Output.Contains("was cancelled before"), "the cancellation notice is shown");
+        Assert.False(relay.HasExited);
+
+        // The read the interrupt abandoned is still the one that receives this line.
+        await relay.StandardInput.WriteLineAsync("/pause");
+        await Poll.UntilAsync(() => _harness.Output.Contains("Pause mode is on. Use"), "the line typed after the interrupt is read");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, relay.ExitCode);
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [UnixFact]
+    public async Task Termination_at_a_pause_does_not_wait_for_an_agent_that_is_not_running()
+    {
+        var relay = await StartAndWaitForPauseAsync();
+
+        var stopwatch = Stopwatch.StartNew();
+        Signal("TERM", relay.Id);
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Waiting out the shutdown grace period would take four seconds.
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(3), $"Relay took {stopwatch.Elapsed} to exit.");
+    }
+
+    private async Task<Process> StartAndWaitForPauseAsync()
+    {
+        _harness.InstallAgent("claude", RelayHarness.ClaudeReply(@"@codex\nyour turn"));
+        _harness.InstallAgent("codex", RelayHarness.CodexReply("unused"));
+        var relay = _harness.Start("start");
+        await relay.StandardInput.WriteLineAsync("/pause on");
+        await relay.StandardInput.WriteLineAsync("@claude @codex agree");
+        await Poll.UntilAsync(() => _harness.Output.Contains("Paused."), "the handover is held");
+        return relay;
+    }
+
     private static void Signal(string name, int pid)
     {
         // The shell builtin, because minimal Linux images ship no standalone kill binary.

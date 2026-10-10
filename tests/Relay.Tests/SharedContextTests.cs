@@ -34,7 +34,7 @@ public partial class SharedContextTests
         => (router ?? new MessageRouter()).SendHumanMessageAsync(room, text);
 
     /// <summary>The lines between the transcript's opening and closing lines.</summary>
-    private static string[] Transcript(string prompt)
+    internal static string[] Transcript(string prompt)
     {
         var lines = prompt.Split('\n');
         var block = BlockName().Match(prompt).Groups[1].Value;
@@ -44,7 +44,7 @@ public partial class SharedContextTests
         return lines[(open + 1)..close];
     }
 
-    private static string Message(string from, string kind, string to, string text)
+    internal static string Message(string from, string kind, string to, string text)
         => $"<message from=\"{from}\" kind=\"{kind}\" to=\"{to}\">{text}</message>";
 
     private static string Omitted(int count, string reason) => $"<omitted count=\"{count}\" reason=\"{reason}\"/>";

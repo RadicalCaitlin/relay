@@ -32,8 +32,9 @@ Key types:
   (send a message, lifecycle state), `AgentDiscoveryService`, `AgentException` (a failure whose
   message is safe to show the user).
 - `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`.
-- `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `MessageRouter`, `SharedContext`
-  (builds what an agent is sent: the room messages it has missed, then the user's message).
+- `Relay.Core.Routing`: `Mention` (parses a leading `@target`, and an agent's handover), `MessageRouter`
+  (runs an exchange and reports why it stopped), `ExchangeLimits`, `SharedContext` (builds what an
+  agent is sent: the room messages it has missed, then the user's message or another agent's handover).
 - `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
@@ -45,6 +46,12 @@ notice explaining the failure, is recorded in the room and returned for display.
 Shared context: before calling the agent, the router asks the room what that agent has not seen
 and `SharedContext` puts it in front of the message as a labelled transcript. The decisions behind
 this are in `docs/adr/0001-shared-room-context.md`; read it before changing what agents are shown.
+
+Exchanges: a message that begins with several mentions opens an exchange between those agents.
+Inside it the router delivers a reply whose first line is a mention of an invited agent, for at most
+`ExchangeLimits.MaxTurns` turns, and returns a `StopReason`. `StartCommand` shows each message as
+the router records it and, in pause mode, answers the router's question about each handover.
+Read `docs/adr/0002-agent-to-agent-exchanges.md` before changing who can start a turn.
 
 ## Commands
 
@@ -145,7 +152,19 @@ and update it in the same change.
   Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
 - Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
 - A security fix needs a regression test that fails without it. Check that by removing the fix.
-- Agents never trigger other agents. Only human messages are routed.
+- An agent starts another agent's turn only inside an exchange: the user named both agents at the
+  start of their message, and the reply's first line is only a mention of the other
+  (`Mention.TryParseHandover`). Outside an exchange a reply is never parsed for one. Nothing else an agent
+  writes starts a turn, invites an agent, or is read as a `/command`.
+- Every exchange is bounded by `ExchangeLimits.MaxTurns`, one agent runs at a time, and a reply
+  addresses at most one agent. Do not add a path that starts a turn without counting it.
+- A handed-over message is sent with `SharedContext.ComposeHandover`: inside the transcript, under
+  its author's name. Only Relay's own words follow the transcript on such a turn.
+- The user never edits an agent's message. At a pause they deliver it, stop, or write to its author.
+- Pause mode is set with `/pause on` and `/pause off`, never toggled. At a pause, a line that looks
+  like a command or is addressed to another agent is asked again, never sent to an agent.
+- Read the console through `StartCommand.ReadLine`, which keeps a read that was interrupted. A
+  second `Console.ReadLine` would lose the next line typed to the abandoned one.
 - Everything an agent is sent goes through `SharedContext.Compose`. Any text that did not come from
   the user's current message must sit inside the transcript, escaped, with its author named. Never
   place another participant's words where they could read as the user's or as Relay's.
