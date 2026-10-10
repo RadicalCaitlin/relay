@@ -136,3 +136,7 @@ git config core.hooksPath .githooks
 ```
 
 CI runs the same scan on the commits of every pull request.
+
+## Licence
+
+Relay is released under the [MIT License](LICENSE).
