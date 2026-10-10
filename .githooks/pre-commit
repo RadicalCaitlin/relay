@@ -1,0 +1,12 @@
+#!/bin/sh
+# Refuses a commit whose staged changes contain a secret.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Git runs hooks with its own bundled sh on every platform, including Windows.
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed, so this commit cannot be checked for secrets." >&2
+  echo "Install it from https://github.com/gitleaks/gitleaks#installing and commit again." >&2
+  exit 1
+fi
+
+exec gitleaks git --pre-commit --staged --redact --no-banner
