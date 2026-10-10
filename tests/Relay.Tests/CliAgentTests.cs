@@ -1,3 +1,4 @@
+using Relay.Agents.Cli;
 using Relay.Agents.Claude;
 using Relay.Agents.Codex;
 using Relay.Agents.Processes;
@@ -75,17 +76,48 @@ public class CliAgentTests
     {
         var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
-        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
         runner.Requests.Clear();
 
         Assert.Equal("pong", await session.SendAsync("first; rm -rf /"));
         await session.SendAsync("second");
 
-        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[0].Arguments);
+        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[0].Arguments);
         Assert.Equal("first; rm -rf /", runner.Requests[0].StandardInput);
         Assert.Equal("/work", runner.Requests[0].WorkingDirectory);
-        Assert.Equal(["-p", "--output-format", "json", "--resume", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"], runner.Requests[1].Arguments);
+        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user", "--resume", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"], runner.Requests[1].Arguments);
         Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public void Claude_loads_project_settings_only_for_a_trusted_workspace()
+    {
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));
+
+        var untrusted = provider.BuildArguments(sessionId: null, new("/work"));
+        var trusted = provider.BuildArguments(sessionId: null, new("/work", TrustWorkspace: true));
+
+        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], untrusted);
+        Assert.Equal(["-p", "--output-format", "json"], trusted);
+    }
+
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    [InlineData(false, "ce6f4686-9f97-4a98-8fb4-3125a2b0e671")]
+    [InlineData(true, "ce6f4686-9f97-4a98-8fb4-3125a2b0e671")]
+    public void Providers_never_pass_flags_that_approve_tool_use_or_weaken_sandboxing(bool trustWorkspace, string? sessionId)
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        var locator = new FakeLocator("/usr/bin/agent");
+        var options = new AgentSessionOptions("/work", trustWorkspace);
+        string[] forbidden = ["danger", "bypass", "skip", "permission", "approve", "approval", "sandbox", "full-auto", "allowed", "yolo"];
+
+        foreach (var provider in new CliAgentProvider[] { new ClaudeProvider(locator, runner), new CodexProvider(locator, runner) })
+        {
+            foreach (var argument in provider.BuildArguments(sessionId, options))
+                Assert.DoesNotContain(forbidden, word => argument.Contains(word, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]
@@ -93,7 +125,7 @@ public class CliAgentTests
     {
         var runner = new FakeProcessRunner(_ => Ok(CodexOk));
         var provider = new CodexProvider(new FakeLocator("/usr/bin/codex"), runner);
-        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
         runner.Requests.Clear();
 
         Assert.Equal("pong", await session.SendAsync("first"));
@@ -111,12 +143,12 @@ public class CliAgentTests
     {
         var runner = new FakeProcessRunner(_ => Ok($$"""{"is_error":false,"result":"pong","session_id":"{{sessionId}}"}"""));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
-        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
 
         await session.SendAsync("first");
         await session.SendAsync("second");
 
-        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[^1].Arguments);
+        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[^1].Arguments);
     }
 
     [Fact]
@@ -125,7 +157,7 @@ public class CliAgentTests
         var fail = true;
         var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "boom") : Ok(ClaudeOk));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
-        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
 
         await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi"));
         Assert.Equal(AgentSessionState.Faulted, session.State);
@@ -141,7 +173,7 @@ public class CliAgentTests
         var fail = false;
         var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "rate limited") : Ok(ClaudeOk));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
-        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
         await session.SendAsync("first");
 
         fail = true;
@@ -152,14 +184,14 @@ public class CliAgentTests
         await session.SendAsync("fourth");
 
         Assert.Contains("--resume", runner.Requests[2].Arguments);
-        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[3].Arguments);
+        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[3].Arguments);
     }
 
     [Fact]
     public async Task Reset_clears_a_faulted_state()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(1, string.Empty, "boom")));
-        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
         await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi"));
 
         session.Reset();
@@ -171,7 +203,7 @@ public class CliAgentTests
     public async Task Session_rejects_use_after_dispose()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));
-        var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
 
         await session.DisposeAsync();
 

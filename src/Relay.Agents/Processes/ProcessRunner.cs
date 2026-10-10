@@ -45,6 +45,13 @@ public sealed class ProcessRunner : IProcessRunner
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
 
+        // The agent CLIs are shims that call "node" by bare name, so a node planted in the working
+        // directory must not be found: neither through a relative PATH entry, nor through cmd.exe's
+        // habit of looking in the current directory before PATH.
+        startInfo.Environment["PATH"] = SearchPath.WithoutRelativeEntries(Environment.GetEnvironmentVariable("PATH"));
+        if (OperatingSystem.IsWindows())
+            startInfo.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
+
         var name = Path.GetFileNameWithoutExtension(request.FileName);
         using var process = new Process { StartInfo = startInfo };
         try

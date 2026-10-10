@@ -33,6 +33,7 @@ Key types:
   message is safe to show the user).
 - `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`.
 - `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `MessageRouter`.
+- `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
 
@@ -48,6 +49,7 @@ dotnet test                                       # run all tests
 dotnet test --filter "FullyQualifiedName~Router"  # run a subset
 dotnet run --project src/Relay.Cli -- agents      # run the CLI
 dotnet run --project src/Relay.Cli -- start
+git config core.hooksPath .githooks               # once per clone: block commits that contain secrets
 ```
 
 The build must stay free of warnings and the tests must pass before a change is finished.
@@ -71,7 +73,9 @@ The build must stay free of warnings and the tests must pass before a change is 
 - Test output parsers with captured sample output.
 - `ProcessRunner` tests may launch only tools guaranteed to exist (`dotnet`, `ping`, `sleep`, `sh`,
   and Windows PowerShell on Windows).
-- `ChatSignalTests` runs the built CLI against a fake `claude` script and sends it real signals.
+- `ChatSecurityTests` and `ChatSignalTests` run the built CLI through `RelayHarness`, with a fake
+  `claude` first on `PATH`. Use it for anything that must hold end to end.
+- `ChatSignalTests` sends the CLI real signals.
   It is marked `[UnixFact]` and is skipped on Windows, where signals cannot be sent to a process.
 
 ## Adding an agent provider
@@ -89,6 +93,12 @@ An agent that is not CLI-backed implements `IAgentProvider` and `IAgentSession` 
 
 ## Security and process execution rules
 
+`docs/threat-model.md` is the security model. Read it before changing anything in this section,
+and update it in the same change.
+
+- The working directory is untrusted unless `AgentSessionOptions.TrustWorkspace` is set. A provider
+  must not let folder content configure the agent or run commands when it is false. For Claude that
+  means `--setting-sources user`. A new provider must document how it meets this, with evidence.
 - Use only documented CLI arguments. Never guess or invent flags.
 - Never pass flags that auto-approve tool use or weaken sandboxing, such as
   `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`,
@@ -101,13 +111,25 @@ An agent that is not CLI-backed implements `IAgentProvider` and `IAgentSession` 
   `CliAgentSession` does for session ids. It must not be able to start with `-`, or it becomes a flag.
 - Discovery must not launch the agent unless the caller asks for its version.
 - Never start a process through a shell (`UseShellExecute` stays `false`).
-- Resolve executables through `IExecutableLocator`. Never hardcode install paths.
+- Resolve executables through `IExecutableLocator`. Never hardcode install paths, and never resolve
+  from a relative `PATH` entry or the working directory. `ProcessRunner` also removes relative
+  entries from the `PATH` the child inherits.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.
 - When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
   cancelled first, so no agent process outlives Relay. A forced kill of Relay cannot be handled.
 - Never log, print, or persist environment variables, tokens, or credentials. Never read an
   agent's credential files.
-- Treat agent output as untrusted: escape it before rendering and strip control characters.
+- Never commit a secret, including in tests: build fake credentials at run time rather than
+  writing them as literals. CI scans each pull request's commits with gitleaks, and `.githooks/pre-commit`
+  does the same for staged changes once enabled with `git config core.hooksPath .githooks`.
+  Do not bypass the hook.
+- Folder trust is remembered by `WorkspaceTrustStore`, per exact folder, in the user's own
+  configuration folder. Nothing in the working directory may influence where that file is read from.
+- Treat agent output, CLI error text and version strings as untrusted: print them only through
+  `RelayConsole.Safe`, which strips control and bidirectional characters and escapes markup.
+  Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
+- Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
+- A security fix needs a regression test that fails without it. Check that by removing the fix.
 - Agents never trigger other agents. Only human messages are routed.
 
 ## Expectations for coding agents modifying Relay

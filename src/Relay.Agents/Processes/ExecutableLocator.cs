@@ -16,15 +16,11 @@ public sealed class PathExecutableLocator : IExecutableLocator
 
     public static string? Find(string command, string? path, string? pathExt)
     {
-        if (string.IsNullOrEmpty(path))
-            return null;
-
-        var directories = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var directory in directories)
+        foreach (var entry in SearchPath.AbsoluteEntries(path))
         {
             foreach (var extension in Extensions(pathExt))
             {
-                var candidate = Path.Combine(directory.Trim('"'), command + extension);
+                var candidate = Path.Combine(entry.Trim('"'), command + extension);
                 if (IsExecutable(candidate))
                     return Path.GetFullPath(candidate);
             }

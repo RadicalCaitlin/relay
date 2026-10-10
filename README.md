@@ -55,6 +55,8 @@ dotnet run --project src/Relay.Cli -- <command>
 | `relay`           | Home screen: banner, agent status, and available commands |
 | `relay agents`    | List agent providers, install status, version, and path  |
 | `relay start`     | Start an interactive chatroom                            |
+| `relay start --trust-workspace` | Start a chatroom, trusting the current folder for that session only |
+| `relay trust`     | Trust the current folder and remember it (`--remove` to undo, `--list` to show all) |
 | `relay --version` | Print the Relay version                                  |
 | `relay --help`    | Show help                                                |
 
@@ -74,8 +76,21 @@ Inside the chatroom:
 | `/exit`             | Leave the chatroom                                  |
 | `Ctrl+C`            | Cancel the request in flight; exit when idle        |
 
-Agents run in the directory you start Relay from, with whatever access their own configuration
-grants them there. Start Relay only in directories you trust.
+### Folder trust
+
+Agents run in the folder you start Relay from, with whatever access your own agent configuration
+grants them there.
+
+By default Relay treats that folder as **untrusted**: Claude loads only your user-level settings
+and ignores the folder's own hooks, MCP servers, settings and `CLAUDE.md`. This matters because a
+folder's hooks and MCP servers run commands on your machine, and Claude Code does not show its
+usual trust prompt when Relay starts it.
+
+The first time you run `relay start` in a folder it asks whether you trust the files there. A yes
+is remembered, so you are asked once per folder; `relay trust --remove` undoes it. Trust only
+folders you would run code from. The chatroom header shows which mode is in effect.
+
+See [docs/threat-model.md](docs/threat-model.md) for the full security model and remaining risks.
 
 ## Agent support
 
@@ -92,6 +107,7 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 - An agent sees only the messages addressed to it, not the rest of the room. Each agent keeps
   its own conversation for the lifetime of the room, or until you `/reset` it.
 - Replies arrive whole when the agent finishes; there is no streaming.
+
 - Agents cannot answer permission prompts through Relay. Tool use that would need approval is
   declined by the agent CLI, so agents are effectively limited to what their own configuration
   already allows. Codex also refuses to run outside a Git repository.
@@ -110,3 +126,12 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 ## Contributing
 
 See [AGENTS.md](AGENTS.md) for architecture, conventions, and the rules for process execution.
+
+To have Git refuse a commit that contains a secret, install
+[gitleaks](https://github.com/gitleaks/gitleaks#installing) and enable the hook once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+CI runs the same scan on the commits of every pull request.

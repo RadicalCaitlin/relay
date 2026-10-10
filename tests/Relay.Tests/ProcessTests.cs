@@ -115,6 +115,109 @@ public class ProcessTests : IDisposable
         Assert.Null(PathExecutableLocator.Find("relaytool", _directory, ".EXE;.CMD"));
     }
 
+    [Fact]
+    public void Locator_ignores_relative_path_entries_so_the_working_directory_cannot_supply_the_agent()
+    {
+        // Under the current directory, so that a relative entry can reach it on any drive layout.
+        var relative = $"relay-locator-{Guid.NewGuid():N}";
+        var directory = Directory.CreateDirectory(Path.Combine(Environment.CurrentDirectory, relative)).FullName;
+        try
+        {
+            var file = Path.Combine(directory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool");
+            File.WriteAllText(file, string.Empty);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            File.Copy(file, Path.Combine(Environment.CurrentDirectory, Path.GetFileName(file)), overwrite: true);
+
+            Assert.Null(PathExecutableLocator.Find("relaytool", string.Join(Path.PathSeparator, ".", relative), ".EXE;.CMD"));
+            Assert.NotNull(PathExecutableLocator.Find("relaytool", directory, ".EXE;.CMD"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+            File.Delete(Path.Combine(Environment.CurrentDirectory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool"));
+        }
+    }
+
+    [Fact]
+    public async Task Runner_does_not_let_a_cmd_shim_pick_up_a_program_planted_in_the_working_directory()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        // Mirrors the npm shims: claude.cmd calls "node" by bare name, and cmd.exe would look in the
+        // working directory (here an untrusted repository) before PATH.
+        var shimDirectory = Directory.CreateDirectory(Path.Combine(_directory, "shim")).FullName;
+        var repository = Directory.CreateDirectory(Path.Combine(_directory, "repo")).FullName;
+        File.WriteAllText(Path.Combine(shimDirectory, "agent.cmd"), "@relayhelper\r\n");
+        File.WriteAllText(Path.Combine(repository, "relayhelper.cmd"), "@echo planted\r\n");
+
+        // Some terminals already set the variable the runner relies on; clear it so the runner is what protects us.
+        const string variable = "NoDefaultCurrentDirectoryInExePath";
+        var inherited = Environment.GetEnvironmentVariable(variable);
+        Environment.SetEnvironmentVariable(variable, null);
+        try
+        {
+            var result = await _runner.RunAsync(new(Path.Combine(shimDirectory, "agent.cmd"), []) { WorkingDirectory = repository });
+
+            Assert.DoesNotContain("planted", result.StandardOutput);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, inherited);
+        }
+    }
+
+    [Fact]
+    public void Search_path_keeps_only_absolute_entries()
+    {
+        var absolute = _directory;
+        var path = string.Join(Path.PathSeparator, ".", absolute, "", "relative" + Path.DirectorySeparatorChar + "bin", $"\"{absolute}\"");
+
+        Assert.Equal(string.Join(Path.PathSeparator, absolute, $"\"{absolute}\""), SearchPath.WithoutRelativeEntries(path));
+        Assert.Equal(string.Empty, SearchPath.WithoutRelativeEntries(null));
+    }
+
+    [Fact]
+    public async Task Runner_does_not_pass_relative_path_entries_on_to_the_agent()
+    {
+        // The shim calls a helper by bare name, as the agent CLIs call "node". With "." on PATH the
+        // helper planted in the working directory (an untrusted repository) would be found.
+        var shimDirectory = Directory.CreateDirectory(Path.Combine(_directory, "shim")).FullName;
+        var repository = Directory.CreateDirectory(Path.Combine(_directory, "repo")).FullName;
+        string shim;
+        if (OperatingSystem.IsWindows())
+        {
+            shim = Path.Combine(shimDirectory, "agent.cmd");
+            File.WriteAllText(shim, "@relaydothelper\r\n");
+            File.WriteAllText(Path.Combine(repository, "relaydothelper.cmd"), "@echo planted\r\n");
+        }
+        else
+        {
+            shim = Path.Combine(shimDirectory, "agent");
+            var planted = Path.Combine(repository, "relaydothelper");
+            File.WriteAllText(shim, "#!/bin/sh\nrelaydothelper\n");
+            File.WriteAllText(planted, "#!/bin/sh\necho planted\n");
+            File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(planted, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        }
+
+        var inherited = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", inherited + Path.PathSeparator + ".");
+        try
+        {
+            var result = await _runner.RunAsync(new(shim, []) { WorkingDirectory = repository });
+
+            Assert.DoesNotContain("planted", result.StandardOutput);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", inherited);
+        }
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
