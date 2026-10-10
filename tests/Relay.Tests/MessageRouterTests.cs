@@ -144,6 +144,18 @@ public class MessageRouterTests
     }
 
     [Fact]
+    public async Task Unexpected_provider_exception_becomes_a_system_notice_instead_of_escaping()
+    {
+        AddAgent("claude", new FakeSession((_, _) => Task.FromException<string>(new InvalidOperationException("provider bug"))));
+
+        var result = await _router.SendHumanMessageAsync(_room, "@claude hi");
+
+        Assert.Equal(SenderType.System, result.Reply!.SenderType);
+        Assert.Equal("CLAUDE failed unexpectedly: provider bug", result.Reply.Content);
+        Assert.Equal(2, _room.Messages.Count);
+    }
+
+    [Fact]
     public async Task Cancelled_request_becomes_a_system_notice()
     {
         AddAgent("claude", new FakeSession(async (_, ct) =>

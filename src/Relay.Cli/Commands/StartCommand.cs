@@ -196,7 +196,7 @@ internal sealed class StartCommand(
                 console.MarkupLine("[dim]Recorded. Address an agent to get a reply, e.g. @claude hello[/]");
 
             if (recipient?.State == AgentSessionState.Faulted)
-                console.MarkupLine($"[dim]If this keeps happening, /reset {Markup.Escape(recipient.Id)} starts a new conversation with {Markup.Escape(recipient.DisplayName)}.[/]");
+                console.MarkupLine($"[dim]If this keeps happening, check that {Markup.Escape(recipient.DisplayName)} works when you run it on its own (for example, that you are signed in). /reset {Markup.Escape(recipient.Id)} starts a new conversation with it.[/]");
         }
         finally
         {

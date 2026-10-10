@@ -61,6 +61,10 @@ The build must stay free of warnings and the tests must pass before a change is 
 - Async methods end in `Async` and accept a `CancellationToken`.
 - Expected agent failures are `AgentException`s with a user-readable message. Do not catch
   exceptions you cannot handle, and do not add handling for cases that cannot occur.
+- A failure message says what went wrong in terms the user can act on. `MessageRouter` turns any
+  exception from a provider into a notice in the room, so one agent failing never ends the chat;
+  that catch-all is for the provider boundary only, not a pattern to copy elsewhere.
+- A failed or cancelled turn must leave a session usable and its conversation intact.
 - Comments explain why, not what. No commented-out code.
 - Add an abstraction only when something concrete needs it (a second implementation or a test seam).
 - No new package dependencies without a clear need. No database, networking, or Aspire.

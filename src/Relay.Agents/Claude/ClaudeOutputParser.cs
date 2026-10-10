@@ -24,7 +24,7 @@ public static class ClaudeOutputParser
         {
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
-                throw new AgentException("claude returned output in an unexpected format.");
+                throw new AgentException($"claude {CliFailure.Describe(result)}");
 
             var text = root.GetStringOrNull("result");
             var isError = root.TryGetProperty("is_error", out var flag) && flag.ValueKind == JsonValueKind.True;

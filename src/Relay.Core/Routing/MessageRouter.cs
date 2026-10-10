@@ -52,6 +52,11 @@ public sealed class MessageRouter
         {
             return new(message, Notice(room, $"{participant.DisplayName} failed: {ex.Message}"));
         }
+        catch (Exception ex)
+        {
+            // A provider is a plug-in boundary: whatever it throws must not take the room down with it.
+            return new(message, Notice(room, $"{participant.DisplayName} failed unexpectedly: {ex.Message}"));
+        }
     }
 
     private static ChatMessage Notice(ChatRoom room, string content)

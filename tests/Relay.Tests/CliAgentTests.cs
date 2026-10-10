@@ -200,6 +200,54 @@ public class CliAgentTests
     }
 
     [Fact]
+    public async Task Session_refuses_a_second_message_while_one_is_in_flight_and_is_unharmed_by_it()
+    {
+        var runner = new BlockingProcessRunner();
+        await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+
+        var first = session.SendAsync("one");
+        await runner.Started.Task;
+        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("two"));
+        Assert.Contains("still working", ex.Message);
+        Assert.Equal(AgentSessionState.Busy, session.State);
+
+        runner.Complete(Ok(ClaudeOk));
+        Assert.Equal("pong", await first);
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Cancelled_turn_leaves_the_session_ready_and_its_conversation_intact()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+        await session.SendAsync("one");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("two", new CancellationToken(canceled: true)));
+        Assert.Equal(AgentSessionState.Ready, session.State);
+
+        await session.SendAsync("three");
+        Assert.Contains("--resume", runner.Requests[^1].Arguments);
+    }
+
+    [Fact]
+    public async Task Disposing_a_session_cancels_the_message_in_flight()
+    {
+        var runner = new BlockingProcessRunner();
+        var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+        var inFlight = session.SendAsync("one");
+        await runner.Started.Task;
+
+        await session.DisposeAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inFlight);
+        Assert.Equal(AgentSessionState.Closed, session.State);
+    }
+
+    [Fact]
     public async Task Session_rejects_use_after_dispose()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));
@@ -233,6 +281,48 @@ public class CliAgentTests
         var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(2, stdout, stderr)));
 
         Assert.Equal(expected, ex.Message);
+    }
+
+    [Theory]
+    [InlineData("this is not json")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("")]
+    public void Claude_parser_says_so_when_a_successful_run_prints_something_it_cannot_read(string stdout)
+    {
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(Ok(stdout)));
+
+        Assert.StartsWith("claude finished without an error, but Relay could not read its output.", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("this is not json")]
+    [InlineData("""{"no":"type"}""")]
+    [InlineData("")]
+    public void Codex_parser_says_so_when_a_successful_run_prints_something_it_cannot_read(string stdout)
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok(stdout)));
+
+        Assert.StartsWith("codex finished without an error, but Relay could not read its output.", ex.Message);
+    }
+
+    [Fact]
+    public void Codex_parser_reports_an_empty_answer_when_the_turn_ran_but_said_nothing()
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok("""{"type":"turn.completed"}""")));
+
+        Assert.Equal("codex returned an empty response.", ex.Message);
+    }
+
+    [Fact]
+    public void Failure_summary_keeps_only_the_end_of_a_long_error_output()
+    {
+        var stderr = string.Join('\n', Enumerable.Range(1, 50).Select(i => $"line {i} " + new string('x', 200)));
+
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(1, string.Empty, stderr)));
+
+        Assert.StartsWith("claude exited with code 1: ", ex.Message);
+        Assert.DoesNotContain("line 1 ", ex.Message);
+        Assert.InRange(ex.Message.Length, 1, 450);
     }
 
     [Fact]
