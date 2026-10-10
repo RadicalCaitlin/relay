@@ -112,7 +112,8 @@ and update it in the same change.
 - Discovery must not launch the agent unless the caller asks for its version.
 - Never start a process through a shell (`UseShellExecute` stays `false`).
 - Resolve executables through `IExecutableLocator`. Never hardcode install paths, and never resolve
-  from a relative `PATH` entry or the working directory.
+  from a relative `PATH` entry or the working directory. `ProcessRunner` also removes relative
+  entries from the `PATH` the child inherits.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.
 - When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
   cancelled first, so no agent process outlives Relay. A forced kill of Relay cannot be handled.
@@ -126,6 +127,8 @@ and update it in the same change.
   configuration folder. Nothing in the working directory may influence where that file is read from.
 - Treat agent output, CLI error text and version strings as untrusted: print them only through
   `RelayConsole.Safe`, which strips control and bidirectional characters and escapes markup.
+  Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
+- Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
 - A security fix needs a regression test that fails without it. Check that by removing the fix.
 - Agents never trigger other agents. Only human messages are routed.
 

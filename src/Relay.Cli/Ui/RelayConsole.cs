@@ -11,10 +11,20 @@ internal static class RelayConsole
     /// overrides, so it cannot reorder what is shown. Then escapes Spectre markup.
     /// </summary>
     public static string Safe(string text)
-        => Markup.Escape(string.Concat(text.Where(c => c is '\n' or '\t' || !(char.IsControl(c) || IsBidiControl(c)))));
+        => Markup.Escape(string.Concat(text.Where(c => c is '\n' or '\t' || !IsUnsafe(c))));
 
+    /// <summary>
+    /// As <see cref="Safe"/>, for text that must stay on one line, such as a folder name. A name
+    /// containing a line break could otherwise add lines that look like Relay's own output.
+    /// </summary>
+    public static string SafeLine(string text)
+        => Markup.Escape(string.Concat(text.Where(c => !IsUnsafe(c))));
+
+    private static bool IsUnsafe(char c) => char.IsControl(c) || IsBidiControl(c);
+
+    // Written as escapes on purpose: the characters themselves are invisible in an editor or a diff.
     private static bool IsBidiControl(char c)
-        => c is (>= '‪' and <= '‮') or (>= '⁦' and <= '⁩') or '‎' or '‏' or '؜';
+        => c is (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069') or '\u200E' or '\u200F' or '\u061C';
 
     public static void WriteBanner(this IAnsiConsole console)
     {

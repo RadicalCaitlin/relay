@@ -169,6 +169,55 @@ public class ProcessTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Search_path_keeps_only_absolute_entries()
+    {
+        var absolute = _directory;
+        var path = string.Join(Path.PathSeparator, ".", absolute, "", "relative" + Path.DirectorySeparatorChar + "bin", $"\"{absolute}\"");
+
+        Assert.Equal(string.Join(Path.PathSeparator, absolute, $"\"{absolute}\""), SearchPath.WithoutRelativeEntries(path));
+        Assert.Equal(string.Empty, SearchPath.WithoutRelativeEntries(null));
+    }
+
+    [Fact]
+    public async Task Runner_does_not_pass_relative_path_entries_on_to_the_agent()
+    {
+        // The shim calls a helper by bare name, as the agent CLIs call "node". With "." on PATH the
+        // helper planted in the working directory (an untrusted repository) would be found.
+        var shimDirectory = Directory.CreateDirectory(Path.Combine(_directory, "shim")).FullName;
+        var repository = Directory.CreateDirectory(Path.Combine(_directory, "repo")).FullName;
+        string shim;
+        if (OperatingSystem.IsWindows())
+        {
+            shim = Path.Combine(shimDirectory, "agent.cmd");
+            File.WriteAllText(shim, "@relaydothelper\r\n");
+            File.WriteAllText(Path.Combine(repository, "relaydothelper.cmd"), "@echo planted\r\n");
+        }
+        else
+        {
+            shim = Path.Combine(shimDirectory, "agent");
+            var planted = Path.Combine(repository, "relaydothelper");
+            File.WriteAllText(shim, "#!/bin/sh\nrelaydothelper\n");
+            File.WriteAllText(planted, "#!/bin/sh\necho planted\n");
+            File.SetUnixFileMode(shim, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(planted, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        }
+
+        var inherited = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", inherited + Path.PathSeparator + ".");
+        try
+        {
+            var result = await _runner.RunAsync(new(shim, []) { WorkingDirectory = repository });
+
+            Assert.DoesNotContain("planted", result.StandardOutput);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", inherited);
+        }
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

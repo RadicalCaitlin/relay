@@ -63,11 +63,11 @@ internal sealed class StartCommand(
     // record. A folder is untrusted until the user says otherwise, and a yes is remembered.
     private bool ResolveTrust(Settings settings, string folder)
     {
-        var name = RelayConsole.Safe(folder);
+        var name = RelayConsole.SafeLine(folder);
         var trusted = true;
         if (settings.TrustWorkspace)
             _folderStatus = $"[dim]Folder: {name} (trusted for this session)[/]";
-        else if (trustStore.IsTrusted(folder))
+        else if (IsRemembered(folder))
             _folderStatus = $"[dim]Folder: {name} (trusted)[/]";
         else if (AskToTrust(name))
             _folderStatus = Remember(folder)
@@ -76,20 +76,33 @@ internal sealed class StartCommand(
         else
         {
             trusted = false;
-            _folderStatus = $"[yellow]Folder: {name} (not trusted: its agent settings, hooks, MCP servers and CLAUDE.md are ignored; run 'relay trust' here to load them)[/]";
+            _folderStatus = $"[yellow]Folder: {name} (not trusted: Claude ignores its settings, hooks, MCP servers and CLAUDE.md, and Codex applies its own trust checks; run 'relay trust' here to change that)[/]";
         }
 
         return trusted;
     }
 
-    // Without a person to ask (redirected input), the folder stays untrusted.
+    private bool IsRemembered(string folder)
+    {
+        try
+        {
+            return trustStore.IsTrusted(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            console.MarkupLine($"[yellow]Could not read the trusted-folder list: {RelayConsole.SafeLine(ex.Message)}[/]");
+            return false;
+        }
+    }
+
+    // Without a person who can both see the question and answer it, the folder stays untrusted.
     private bool AskToTrust(string name)
     {
-        if (Console.IsInputRedirected)
+        if (Console.IsInputRedirected || Console.IsOutputRedirected || !console.Profile.Capabilities.Interactive)
             return false;
 
         console.MarkupLine($"Agents will run in [bold]{name}[/].");
-        console.MarkupLine("[dim]A trusted folder can configure the agents: its hooks and MCP servers run commands on your machine.[/]");
+        console.MarkupLine("[dim]A trusted folder can configure Claude: its hooks and MCP servers run commands on your machine. Codex applies its own trust checks either way.[/]");
         var trusted = console.Confirm("Do you trust the files in this folder?", defaultValue: false);
         console.WriteLine();
         return trusted;
@@ -104,7 +117,7 @@ internal sealed class StartCommand(
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            console.MarkupLine($"[yellow]Could not remember this choice: {RelayConsole.Safe(ex.Message)}[/]");
+            console.MarkupLine($"[yellow]Could not remember this choice: {RelayConsole.SafeLine(ex.Message)}[/]");
             return false;
         }
     }

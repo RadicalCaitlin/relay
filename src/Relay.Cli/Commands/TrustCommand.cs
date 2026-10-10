@@ -17,18 +17,23 @@ internal sealed class TrustCommand(IAnsiConsole console, WorkspaceTrustStore tru
         [CommandOption("--list")]
         [Description("List every trusted folder.")]
         public bool List { get; init; }
+
+        public override ValidationResult Validate()
+            => Remove && List
+                ? ValidationResult.Error("--remove and --list cannot be used together.")
+                : ValidationResult.Success();
     }
 
     public override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var folder = RelayConsole.Safe(Environment.CurrentDirectory);
+        var folder = RelayConsole.SafeLine(Environment.CurrentDirectory);
         try
         {
             if (settings.List)
             {
                 var folders = trustStore.TrustedFolders;
                 foreach (var trusted in folders)
-                    console.MarkupLine(RelayConsole.Safe(trusted));
+                    console.MarkupLine(RelayConsole.SafeLine(trusted));
                 if (folders.Count == 0)
                     console.MarkupLine("[dim]No trusted folders.[/]");
             }
@@ -49,7 +54,7 @@ internal sealed class TrustCommand(IAnsiConsole console, WorkspaceTrustStore tru
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            console.MarkupLine($"[red]Could not update {RelayConsole.Safe(trustStore.FilePath)}: {RelayConsole.Safe(ex.Message)}[/]");
+            console.MarkupLine($"[red]Could not use the trusted-folder list: {RelayConsole.SafeLine(ex.Message)}[/]");
             return 1;
         }
     }

@@ -54,14 +54,22 @@ Trusted folders are stored in `trusted-folders.json` in your user configuration 
 on macOS), or under `RELAY_HOME` when that is set to an absolute path.
 
 - Trust covers the exact folder only, never its parents or subfolders.
-- A missing, unreadable or corrupt file means nothing is trusted.
-- A relative `RELAY_HOME` is ignored, so a folder cannot supply its own trust file.
+- A missing or corrupt file means nothing is trusted.
+- A file that exists but cannot be read (locked by another program, access denied) is reported as
+  an error. It is never treated as empty, because saving on top of that would wipe the list.
+- Changes hold the file exclusively while they read and write it, so two Relay processes cannot
+  lose each other's change.
+- A relative `RELAY_HOME` is ignored, so a folder cannot supply its own trust file. If no user
+  configuration folder can be found at all, nothing is trusted and nothing can be remembered.
 
 The cost of the default is that Claude does not see the project's `CLAUDE.md` in an untrusted folder.
 
-Codex is left to its own checks, which stay active in `codex exec`: it refuses to run outside a
-trusted directory or Git repository, and its `--help` states that hooks need persisted trust.
-Relay passes none of the flags that turn those off.
+**Relay's folder trust governs Claude only.** Codex is left to its own checks, which stay active in
+`codex exec`: it refuses to run outside a trusted directory or Git repository, and its `--help`
+states that hooks need persisted trust. Relay passes none of the flags that turn those off, but it
+also has no documented flag to make Codex ignore a folder. So in a folder Relay calls untrusted,
+Codex still reads that folder's `AGENTS.md`, and loads its project configuration if Codex itself
+considers the folder trusted. The chatroom header says this rather than implying otherwise.
 
 ## Permission and approval boundaries
 
@@ -80,8 +88,10 @@ Relay passes none of the flags that turn those off.
 - **Session ids are the only agent-supplied value placed on a command line.** They must match
   `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`, so they can be neither shell syntax nor a flag.
 - **No shell is involved** (`UseShellExecute = false`), and arguments are passed as a list.
-- **Executables are resolved from absolute `PATH` entries only.** A relative entry such as `.`
-  would resolve against the working directory and let a repository supply its own `claude`.
+- **Relative `PATH` entries are dropped**, both when Relay resolves `claude` and `codex` and from the
+  `PATH` the agent process inherits. A relative entry such as `.` (or an empty entry on Unix)
+  resolves against the working directory, and would let a repository supply its own `claude`, or
+  the `node` that the real shim then calls.
 - **A program planted in the working directory cannot hijack the shim on Windows.** `cmd.exe`
   searches the current directory before `PATH`, and the npm shims call `node` by bare name, so a
   `node.cmd` in a repository would otherwise run. Relay sets `NoDefaultCurrentDirectoryInExePath`
@@ -94,6 +104,10 @@ Everything Relay did not write is passed through one function before display. It
 characters (so output cannot clear the screen, set the window title, or rewrite earlier lines),
 removes bidirectional override characters (so it cannot reorder what you see), and escapes
 console markup. This covers agent replies, error text from the CLIs, and version strings.
+
+Folder names get a stricter version that also removes line breaks. On Linux and macOS a folder
+name can contain one, and could otherwise add lines that look like Relay's own, such as a fake
+"trusted" status, right when you are deciding whether to trust it.
 
 ## Secrets and logging
 
@@ -109,9 +123,10 @@ console markup. This covers agent replies, error text from the CLIs, and version
 
 Two checks keep credentials out of Relay's own source, both using [gitleaks](https://github.com/gitleaks/gitleaks):
 
-- **CI** scans the commits each pull request or push to `main` adds. Every commit is scanned, so a
-  secret added and then removed within the same pull request is still caught. It does not rescan
-  older history; that was scanned in full, and found clean, when the check was introduced.
+- **CI** scans the commits each pull request or push to `main` adds, including what merge commits
+  themselves change. Every commit is scanned, so a secret added and then removed within the same
+  pull request is still caught. It does not rescan older history; that was scanned in full, and
+  found clean, when the check was introduced.
 - **A pre-commit hook** (`.githooks/pre-commit`) refuses a commit whose staged changes contain a
   secret. It is opt-in per clone (`git config core.hooksPath .githooks`) and needs gitleaks
   installed; without gitleaks it blocks the commit rather than skip the check.
@@ -130,7 +145,7 @@ See "Remaining risks" for the cases this does not cover.
 | --- | --- |
 | **A trusted folder can run commands.** Trusting a folder lets its hooks and MCP servers execute, the same as trusting it in Claude Code. | By design. Only trust folders you would run code from. |
 | **Agents act with your permissions.** Whatever your agent configuration allows without a prompt, an agent can do in the working directory, including in an untrusted folder. Prompt injection from file contents can steer it. | Inherent to coding agents. Keep permissive allow-rules out of your user-level settings. |
-| **Codex trust is not independently verified.** Relay relies on Codex's own trusted-directory and hook-trust checks, confirmed from its help text and its refusal to run outside a Git repository, but not tested with a hostile project configuration. | Open. |
+| **Relay does not enforce folder trust for Codex.** It relies on Codex's own trusted-directory and hook-trust checks, confirmed from its help text and its refusal to run outside a Git repository, but not tested with a hostile project configuration. Codex reads an untrusted folder's `AGENTS.md`. | Open. |
 | **The trust list is an ordinary file in your profile.** Anything running as you, including an agent whose configuration allows it to write there, could add a folder to it. | Accepted for now; the same is true of the agents' own trust records. |
 | **The trust prompt is not covered by an automated test.** It only appears in a real terminal. The remembered, session-only and non-interactive paths are tested end to end. | Open. |
 | **A forced kill of Relay** (`taskkill /F`, `kill -9`, a crash) leaves the agent running. | Open (#22). |

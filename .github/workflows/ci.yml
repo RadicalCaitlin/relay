@@ -25,18 +25,21 @@ jobs:
 
       # Scans the commits this run adds: a pull request's own commits, or what a push added to main.
       # Every commit of each one is scanned, so a secret added and then removed within it is still caught.
+      # -m makes Git show what a merge commit itself changed, such as a conflict resolution; without it
+      # merge commits contribute nothing to the scan.
       - name: Run gitleaks on the new commits
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           case "$BASE" in
-            ""|0000000000000000000000000000000000000000) range="-1 $HEAD" ;;
+            # No earlier commit to compare with (a branch pushed for the first time): scan all of it.
+            ""|0000000000000000000000000000000000000000) range="$HEAD" ;;
             *) range="$BASE..$HEAD" ;;
           esac
           echo "Scanning: $range"
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1 \
-            git --log-opts="$range" --redact --no-banner /repo
+            git --log-opts="-m $range" --redact --no-banner /repo
 
   build-and-test:
     name: Build and test (${{ matrix.os }})

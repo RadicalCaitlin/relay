@@ -12,8 +12,14 @@ internal sealed class RelayHarness : IDisposable
     private readonly StringBuilder _output = new();
     private Process? _relay;
 
+    public RelayHarness() => WorkingDirectory = Directory;
+
     public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("relay-e2e-").FullName;
 
+    /// <summary>Where Relay is started. Defaults to <see cref="Directory"/>.</summary>
+    public string WorkingDirectory { get; set; }
+
+    /// <summary>Everything the most recently started Relay process has printed.</summary>
     public string Output
     {
         get { lock (_output) return _output.ToString(); }
@@ -50,7 +56,7 @@ internal sealed class RelayHarness : IDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
-            WorkingDirectory = Directory,
+            WorkingDirectory = WorkingDirectory,
         };
         startInfo.ArgumentList.Add(RelayAssembly());
         foreach (var argument in arguments)
@@ -64,6 +70,10 @@ internal sealed class RelayHarness : IDisposable
         startInfo.Environment.Remove("GITHUB_ACTIONS");
         startInfo.Environment["NO_COLOR"] = "1";
 
+        Stop();
+        lock (_output)
+            _output.Clear();
+
         _relay = Process.Start(startInfo)!;
         _relay.StandardInput.AutoFlush = true;
         _relay.OutputDataReceived += (_, e) => Append(e.Data);
@@ -73,8 +83,8 @@ internal sealed class RelayHarness : IDisposable
         return _relay;
     }
 
-    /// <summary>Sends the lines to a chat session, then waits for Relay to exit and returns everything it printed.</summary>
-    public async Task<string> ChatAsync(string[] arguments, params string[] lines)
+    /// <summary>Feeds the lines to Relay, waits for it to exit, and returns its exit code and what that run printed.</summary>
+    public async Task<(int ExitCode, string Output)> RunAsync(string[] arguments, params string[] lines)
     {
         var relay = Start(arguments);
         foreach (var line in lines)
@@ -82,16 +92,29 @@ internal sealed class RelayHarness : IDisposable
         relay.StandardInput.Close();
 
         await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
-        Assert.Equal(0, relay.ExitCode);
-        return Output;
+        return (relay.ExitCode, Output);
+    }
+
+    /// <summary>As <see cref="RunAsync"/>, for a run that is expected to succeed.</summary>
+    public async Task<string> ChatAsync(string[] arguments, params string[] lines)
+    {
+        var (exitCode, output) = await RunAsync(arguments, lines);
+        Assert.True(exitCode == 0, $"relay {string.Join(' ', arguments)} exited with code {exitCode}:\n{output}");
+        return output;
     }
 
     public void Dispose()
     {
+        Stop();
+        System.IO.Directory.Delete(Directory, recursive: true);
+    }
+
+    private void Stop()
+    {
         if (_relay is { HasExited: false })
             _relay.Kill(entireProcessTree: true);
         _relay?.Dispose();
-        System.IO.Directory.Delete(Directory, recursive: true);
+        _relay = null;
     }
 
     private void Append(string? line)

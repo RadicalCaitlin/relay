@@ -45,8 +45,10 @@ public sealed class ProcessRunner : IProcessRunner
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
 
-        // cmd.exe looks in the current directory before PATH. The agent CLIs are cmd shims that call
-        // "node" by bare name, so a node.cmd planted in the working directory would run instead.
+        // The agent CLIs are shims that call "node" by bare name, so a node planted in the working
+        // directory must not be found: neither through a relative PATH entry, nor through cmd.exe's
+        // habit of looking in the current directory before PATH.
+        startInfo.Environment["PATH"] = SearchPath.WithoutRelativeEntries(Environment.GetEnvironmentVariable("PATH"));
         if (OperatingSystem.IsWindows())
             startInfo.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
 

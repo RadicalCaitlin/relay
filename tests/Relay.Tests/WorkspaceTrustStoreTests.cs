@@ -75,6 +75,46 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_trust_file_that_cannot_be_read_is_an_error_and_is_left_untouched()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+        var before = File.ReadAllText(_file);
+
+        using (new FileStream(_file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => Store().IsTrusted(_folder));
+            Assert.ThrowsAny<IOException>(() => Store().Trust(_folder));
+            Assert.ThrowsAny<IOException>(() => Store().Revoke(other));
+        }
+
+        Assert.Equal(before, File.ReadAllText(_file));
+        Assert.True(Store().IsTrusted(other));
+    }
+
+    [Fact]
+    public void Trusting_another_folder_keeps_the_ones_already_trusted()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+
+        Store().Trust(_folder);
+        Store().Trust(other);
+        Store().Revoke(_folder);
+
+        Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void Without_a_configuration_folder_nothing_is_trusted_and_nothing_can_be_remembered()
+    {
+        var store = new WorkspaceTrustStore(filePath: null);
+
+        Assert.False(store.IsTrusted(_folder));
+        Assert.Empty(store.TrustedFolders);
+        Assert.Throws<IOException>(() => store.Trust(_folder));
+    }
+
+    [Fact]
     public void Folder_names_are_compared_the_way_the_file_system_compares_them()
     {
         Store().Trust(_folder);
@@ -89,8 +129,9 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
         try
         {
             Environment.SetEnvironmentVariable("RELAY_HOME", ".");
-            Assert.True(Path.IsPathFullyQualified(WorkspaceTrustStore.DefaultFilePath()));
-            Assert.DoesNotContain(Environment.CurrentDirectory, WorkspaceTrustStore.DefaultFilePath());
+            var fallback = Assert.IsType<string>(WorkspaceTrustStore.DefaultFilePath());
+            Assert.True(Path.IsPathFullyQualified(fallback));
+            Assert.DoesNotContain(Environment.CurrentDirectory, fallback);
 
             Environment.SetEnvironmentVariable("RELAY_HOME", _directory);
             Assert.Equal(Path.Combine(_directory, "trusted-folders.json"), WorkspaceTrustStore.DefaultFilePath());
