@@ -62,3 +62,36 @@ internal sealed class FakeLocator(string? path) : IExecutableLocator
 {
     public string? Find(string command) => path;
 }
+
+/// <summary>A process that keeps running until the test completes or cancels it. Reusable, one run at a time.</summary>
+internal sealed class BlockingProcessRunner : IProcessRunner
+{
+    private TaskCompletionSource<ProcessResult> _result = New<ProcessResult>();
+    private TaskCompletionSource<bool> _started = New<bool>();
+
+    public List<ProcessRequest> Requests { get; } = [];
+
+    /// <summary>Completes when the next run has begun.</summary>
+    public Task Started => _started.Task;
+
+    public void Complete(ProcessResult result)
+    {
+        _started = New<bool>();
+        _result.TrySetResult(result);
+    }
+
+    public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
+    {
+        Requests.Add(request);
+        var result = _result = New<ProcessResult>();
+        _started.TrySetResult(true);
+        await using var registration = cancellationToken.Register(() =>
+        {
+            _started = New<bool>();
+            result.TrySetCanceled(cancellationToken);
+        });
+        return await result.Task;
+    }
+
+    private static TaskCompletionSource<T> New<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}

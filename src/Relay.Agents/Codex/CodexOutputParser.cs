@@ -11,6 +11,7 @@ public static class CodexOutputParser
     public static AgentReply Parse(ProcessResult result)
     {
         string? threadId = null, text = null, error = null, turnFailure = null;
+        var sawEvent = false;
 
         foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -20,7 +21,9 @@ public static class CodexOutputParser
             using (document)
             {
                 var root = document.RootElement;
-                switch (root.GetStringOrNull("type"))
+                var type = root.GetStringOrNull("type");
+                sawEvent |= type is not null;
+                switch (type)
                 {
                     case "thread.started":
                         threadId = root.GetStringOrNull("thread_id");
@@ -43,7 +46,7 @@ public static class CodexOutputParser
         // completes, so on its own it only explains a failure; it does not cause one.
         if (turnFailure is not null)
             throw new AgentException(turnFailure.Trim());
-        if (result.ExitCode != 0)
+        if (result.ExitCode != 0 || !sawEvent)
             throw new AgentException(error?.Trim() ?? $"codex {CliFailure.Describe(result)}");
         if (string.IsNullOrWhiteSpace(text))
             throw new AgentException(error?.Trim() ?? "codex returned an empty response.");

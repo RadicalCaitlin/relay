@@ -111,6 +111,7 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 - Agents cannot answer permission prompts through Relay. Tool use that would need approval is
   declined by the agent CLI, so agents are effectively limited to what their own configuration
   already allows. Codex also refuses to run outside a Git repository.
+- An agent's turn has no time limit. If an agent hangs, press `Ctrl+C` to cancel the request.
 - One agent per message, and agents never trigger each other.
 - Not yet packaged; run it with `dotnet run`.
 

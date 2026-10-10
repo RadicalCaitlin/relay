@@ -200,6 +200,78 @@ public class CliAgentTests
     }
 
     [Fact]
+    public async Task Session_refuses_a_second_message_while_one_is_in_flight_and_is_unharmed_by_it()
+    {
+        var runner = new BlockingProcessRunner();
+        await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+
+        var first = session.SendAsync("one");
+        await runner.Started;
+        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("two"));
+        Assert.Contains("still working", ex.Message);
+        Assert.Equal(AgentSessionState.Busy, session.State);
+
+        runner.Complete(Ok(ClaudeOk));
+        Assert.Equal("pong", await first);
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Turn_cancelled_part_way_through_leaves_the_session_ready_and_its_conversation_intact()
+    {
+        var runner = new BlockingProcessRunner();
+        await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+        var first = session.SendAsync("one");
+        await runner.Started;
+        runner.Complete(Ok(ClaudeOk));
+        await first;
+
+        using var cts = new CancellationTokenSource();
+        var second = session.SendAsync("two", cts.Token);
+        await runner.Started;
+        Assert.Equal(AgentSessionState.Busy, session.State);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+        Assert.Equal(AgentSessionState.Ready, session.State);
+
+        var third = session.SendAsync("three");
+        await runner.Started;
+        runner.Complete(Ok(ClaudeOk));
+        await third;
+        Assert.Contains("--resume", runner.Requests[^1].Arguments);
+    }
+
+    [Fact]
+    public async Task Turn_cancelled_before_it_starts_leaves_the_session_ready()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("one", new CancellationToken(canceled: true)));
+
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Disposing_a_session_cancels_the_message_in_flight()
+    {
+        var runner = new BlockingProcessRunner();
+        var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
+            .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+        var inFlight = session.SendAsync("one");
+        await runner.Started;
+
+        await session.DisposeAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inFlight);
+        Assert.Equal(AgentSessionState.Closed, session.State);
+    }
+
+    [Fact]
     public async Task Session_rejects_use_after_dispose()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));
@@ -233,6 +305,68 @@ public class CliAgentTests
         var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(2, stdout, stderr)));
 
         Assert.Equal(expected, ex.Message);
+    }
+
+    [Theory]
+    [InlineData("this is not json")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("""{"foo":1}""")]
+    [InlineData("""{"is_error":false,"result":42}""")]
+    [InlineData("")]
+    public void Claude_parser_says_so_when_a_successful_run_prints_something_it_cannot_read(string stdout)
+    {
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(Ok(stdout)));
+
+        Assert.StartsWith("claude finished without an error, but Relay could not read its output.", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("this is not json")]
+    [InlineData("""{"no":"type"}""")]
+    [InlineData("")]
+    public void Codex_parser_says_so_when_a_successful_run_prints_something_it_cannot_read(string stdout)
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok(stdout)));
+
+        Assert.StartsWith("codex finished without an error, but Relay could not read its output.", ex.Message);
+    }
+
+    [Fact]
+    public void Codex_parser_reports_an_empty_answer_when_the_turn_ran_but_said_nothing()
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok("""{"type":"turn.completed"}""")));
+
+        Assert.Equal("codex returned an empty response.", ex.Message);
+    }
+
+    [Fact]
+    public void Failure_summary_keeps_only_the_end_of_a_long_error_output()
+    {
+        var stderr = string.Join('\n', Enumerable.Range(1, 50).Select(i => $"line {i} " + new string('x', 200)));
+
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(1, string.Empty, stderr)));
+
+        Assert.StartsWith("claude exited with code 1: ", ex.Message);
+        Assert.DoesNotContain("line 1 ", ex.Message);
+        Assert.InRange(ex.Message.Length, 1, 450);
+    }
+
+    [Theory]
+    [InlineData("""{"is_error":true}""")]
+    [InlineData("""{"is_error":true,"result":""}""")]
+    public void Claude_parser_does_not_call_a_run_successful_when_claude_flagged_an_error_without_a_message(string stdout)
+    {
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(Ok(stdout)));
+
+        Assert.Equal("claude reported an error without a message.", ex.Message);
+    }
+
+    [Fact]
+    public void Claude_parser_falls_back_to_the_exit_code_and_stderr_when_an_error_has_no_message()
+    {
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(1, """{"is_error":true}""", "quota exceeded")));
+
+        Assert.Equal("claude exited with code 1: quota exceeded", ex.Message);
     }
 
     [Fact]

@@ -221,9 +221,45 @@ public sealed class CliSmokeTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "@codex hi", "/exit");
 
-        AssertShown("Claude failed:", output);
-        AssertShown("Codex failed: codex returned an empty response.", output);
+        AssertShown("Claude failed: claude finished without an error, but Relay could not read its output.", output);
+        AssertShown("Codex failed: codex finished without an error, but Relay could not read its output.", output);
         AssertNotShown("this is not json", output);
+    }
+
+    [Fact]
+    public async Task Agent_that_is_uninstalled_mid_session_is_reported_and_the_chat_carries_on()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+        var relay = _harness.Start("start");
+        await relay.StandardInput.WriteLineAsync("@claude one");
+        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("Claude: pong")), "the first reply is shown");
+
+        File.Delete(_harness.PathTo(OperatingSystem.IsWindows() ? "claude.cmd" : "claude"));
+        await relay.StandardInput.WriteLineAsync("@claude two");
+        await relay.StandardInput.WriteLineAsync("still here");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(0, relay.ExitCode);
+        AssertShown("Claude failed: Could not start 'claude':", _harness.Output);
+        AssertShown("check that Claude works when you run it on its own", _harness.Output);
+        AssertShown("Recorded.", _harness.Output);
+    }
+
+    [Fact]
+    public async Task Agent_whose_version_check_fails_is_still_listed_and_usable()
+    {
+        _harness.InstallAgentScript(
+            "claude",
+            unixScript: "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo broken >&2; exit 1; fi\ncat > /dev/null\necho '{\"is_error\":false,\"result\":\"pong\"}'\n",
+            windowsScript: "@echo off\nif \"%~1\"==\"--version\" (echo broken 1>&2 & exit /b 1)\necho {\"is_error\":false,\"result\":\"pong\"}\n");
+
+        var agents = await _harness.ChatAsync(["agents"]);
+        var chat = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
+
+        AssertShown("installed", agents);
+        AssertNotShown("broken", agents);
+        AssertShown("Claude: pong", chat);
     }
 
     [Fact]

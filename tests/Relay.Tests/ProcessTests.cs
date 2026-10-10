@@ -33,6 +33,16 @@ public class ProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task Runner_copes_with_a_process_that_exits_without_reading_its_input()
+    {
+        // Far more than a pipe holds, so the write is still under way when the process has gone.
+        var result = await _runner.RunAsync(new("dotnet", ["--version"]) { StandardInput = new string('x', 4 * 1024 * 1024) });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Matches(@"^\d+\.\d+", result.StandardOutput);
+    }
+
+    [Fact]
     public async Task Runner_reports_an_executable_that_cannot_be_started()
         => await Assert.ThrowsAsync<AgentException>(() => _runner.RunAsync(new(Path.Combine(_directory, "missing"), [])));
 
