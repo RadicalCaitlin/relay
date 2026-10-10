@@ -4,14 +4,14 @@ public sealed record DiscoveredAgent(IAgentProvider Provider, AgentDiscoveryResu
 
 public sealed class AgentDiscoveryService(IEnumerable<IAgentProvider> providers)
 {
-    public async Task<IReadOnlyList<DiscoveredAgent>> DiscoverAllAsync(CancellationToken cancellationToken = default)
-        => await Task.WhenAll(providers.Select(p => DiscoverAsync(p, cancellationToken)));
+    public async Task<IReadOnlyList<DiscoveredAgent>> DiscoverAllAsync(bool includeVersion = false, CancellationToken cancellationToken = default)
+        => await Task.WhenAll(providers.Select(p => DiscoverAsync(p, includeVersion, cancellationToken)));
 
-    private static async Task<DiscoveredAgent> DiscoverAsync(IAgentProvider provider, CancellationToken cancellationToken)
+    private static async Task<DiscoveredAgent> DiscoverAsync(IAgentProvider provider, bool includeVersion, CancellationToken cancellationToken)
     {
         try
         {
-            return new(provider, await provider.DiscoverAsync(cancellationToken));
+            return new(provider, await provider.DiscoverAsync(includeVersion, cancellationToken));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

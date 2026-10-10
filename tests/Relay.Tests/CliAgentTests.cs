@@ -25,7 +25,7 @@ public class CliAgentTests
         var runner = new FakeProcessRunner(_ => Ok("2.1.273 (Claude Code)\n"));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
 
-        var result = await provider.DiscoverAsync();
+        var result = await provider.DiscoverAsync(includeVersion: true);
 
         Assert.True(result.IsInstalled);
         Assert.Equal("/usr/bin/claude", result.ExecutablePath);
@@ -38,10 +38,22 @@ public class CliAgentTests
     {
         var provider = new CodexProvider(new FakeLocator("/usr/bin/codex"), new FakeProcessRunner(_ => throw new AgentException("no")));
 
-        var result = await provider.DiscoverAsync();
+        var result = await provider.DiscoverAsync(includeVersion: true);
 
         Assert.True(result.IsInstalled);
         Assert.Null(result.Version);
+    }
+
+    [Fact]
+    public async Task Discovery_does_not_launch_the_cli_unless_the_version_is_requested()
+    {
+        var runner = new FakeProcessRunner(_ => Ok("1.0"));
+
+        var result = await new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner).DiscoverAsync();
+
+        Assert.True(result.IsInstalled);
+        Assert.Null(result.Version);
+        Assert.Empty(runner.Requests);
     }
 
     [Fact]
@@ -91,10 +103,13 @@ public class CliAgentTests
         Assert.Equal(["exec", "resume", "--json", "01a12603-b1c3-7d00-bf0c-d5720f7caecd", "-"], runner.Requests[1].Arguments);
     }
 
-    [Fact]
-    public async Task Session_never_puts_an_unsafe_session_id_on_the_command_line()
+    [Theory]
+    [InlineData("x & calc.exe")]
+    [InlineData("--dangerously-skip-permissions")]
+    [InlineData("-c")]
+    public async Task Session_never_puts_an_unsafe_session_id_on_the_command_line(string sessionId)
     {
-        var runner = new FakeProcessRunner(_ => Ok("""{"is_error":false,"result":"pong","session_id":"x & calc.exe"}"""));
+        var runner = new FakeProcessRunner(_ => Ok($$"""{"is_error":false,"result":"pong","session_id":"{{sessionId}}"}"""));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
         await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
 
@@ -118,6 +133,26 @@ public class CliAgentTests
         fail = false;
         await session.SendAsync("hi");
         Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Session_starts_a_new_conversation_after_a_resumed_turn_fails()
+    {
+        var fail = false;
+        var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "No conversation found") : Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await session.SendAsync("first");
+
+        fail = true;
+        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("second"));
+        fail = false;
+        await session.SendAsync("third");
+
+        Assert.Contains("No conversation found", ex.Message);
+        Assert.Contains("new conversation", ex.Message);
+        Assert.Contains("--resume", runner.Requests[1].Arguments);
+        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[2].Arguments);
     }
 
     [Fact]
@@ -172,6 +207,22 @@ public class CliAgentTests
         var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, line, string.Empty)));
 
         Assert.Equal("usage limit reached", ex.Message);
+    }
+
+    [Fact]
+    public void Codex_parser_ignores_a_transient_error_in_a_turn_that_completes()
+    {
+        var stdout = CodexOk.Replace("""{"type":"turn.started"}""", """{"type":"error","message":"Reconnecting... 1/5"}""");
+
+        Assert.Equal(new("pong", "01a12603-b1c3-7d00-bf0c-d5720f7caecd"), CodexOutputParser.Parse(Ok(stdout)));
+    }
+
+    [Fact]
+    public void Codex_parser_reports_an_error_event_when_no_answer_follows()
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok("""{"type":"error","message":"stream disconnected"}""")));
+
+        Assert.Equal("stream disconnected", ex.Message);
     }
 
     [Fact]

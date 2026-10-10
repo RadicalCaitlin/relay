@@ -32,7 +32,7 @@ Key types:
   (send a message, lifecycle state), `AgentDiscoveryService`, `AgentException` (a failure whose
   message is safe to show the user).
 - `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`.
-- `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `IMessageRouter` / `MessageRouter`.
+- `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `MessageRouter`.
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
 
@@ -95,7 +95,8 @@ An agent that is not CLI-backed implements `IAgentProvider` and `IAgentSession` 
 - User text goes to the agent on stdin, never as a command-line argument. On Windows the CLIs
   are `cmd.exe` shims, where argument quoting is not safe.
 - Any value taken from agent output and placed on a command line must be validated first, as
-  `CliAgentSession` does for session ids.
+  `CliAgentSession` does for session ids. It must not be able to start with `-`, or it becomes a flag.
+- Discovery must not launch the agent unless the caller asks for its version.
 - Never start a process through a shell (`UseShellExecute` stays `false`).
 - Resolve executables through `IExecutableLocator`. Never hardcode install paths.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.

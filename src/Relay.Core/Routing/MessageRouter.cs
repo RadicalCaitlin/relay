@@ -7,18 +7,18 @@ namespace Relay.Core.Routing;
 /// <param name="Reply">The agent response, a system notice explaining why there is none, or null when no agent was addressed.</param>
 public sealed record RoutingResult(ChatMessage Message, ChatMessage? Reply);
 
-public interface IMessageRouter
-{
-    Task<RoutingResult> SendHumanMessageAsync(ChatRoom room, string text, CancellationToken cancellationToken = default);
-}
-
 /// <summary>
 /// Routes a human message to at most one explicitly mentioned agent. Agent replies are
 /// recorded but never re-routed, so agents cannot trigger each other.
 /// </summary>
-public sealed class MessageRouter : IMessageRouter
+public sealed class MessageRouter
 {
-    public async Task<RoutingResult> SendHumanMessageAsync(ChatRoom room, string text, CancellationToken cancellationToken = default)
+    /// <param name="onDispatch">Called just before the message is handed to an agent, so a caller can show that it is waiting.</param>
+    public async Task<RoutingResult> SendHumanMessageAsync(
+        ChatRoom room,
+        string text,
+        Action<AgentParticipant>? onDispatch = null,
+        CancellationToken cancellationToken = default)
     {
         if (!Mention.TryParse(text, out var target, out var body))
             return new(room.AddMessage(ChatRoom.HumanId, SenderType.Human, text), Reply: null);
@@ -38,6 +38,7 @@ public sealed class MessageRouter : IMessageRouter
         if (body.Length == 0)
             return new(message, Notice(room, $"Nothing to send. Try: @{participant.Id} <message>"));
 
+        onDispatch?.Invoke(participant);
         try
         {
             var response = await session.SendAsync(body, cancellationToken);

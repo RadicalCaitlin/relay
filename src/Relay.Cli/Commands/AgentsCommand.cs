@@ -9,7 +9,7 @@ internal sealed class AgentsCommand(IAnsiConsole console, AgentDiscoveryService 
 {
     public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        console.WriteAgentTable(await discovery.DiscoverAllAsync(cancellationToken));
+        console.WriteAgentTable(await discovery.DiscoverAllAsync(includeVersion: true, cancellationToken));
         return 0;
     }
 }

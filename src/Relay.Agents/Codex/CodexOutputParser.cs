@@ -10,7 +10,7 @@ public static class CodexOutputParser
 {
     public static AgentReply Parse(ProcessResult result)
     {
-        string? threadId = null, text = null, error = null;
+        string? threadId = null, text = null, error = null, turnFailure = null;
 
         foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -20,31 +20,33 @@ public static class CodexOutputParser
             using (document)
             {
                 var root = document.RootElement;
-                switch (GetString(root, "type"))
+                switch (root.GetStringOrNull("type"))
                 {
                     case "thread.started":
-                        threadId = GetString(root, "thread_id");
+                        threadId = root.GetStringOrNull("thread_id");
                         break;
                     // A turn may emit several agent messages; the last one is the final answer.
-                    case "item.completed" when root.TryGetProperty("item", out var item) && GetString(item, "type") == "agent_message":
-                        text = GetString(item, "text");
+                    case "item.completed" when root.TryGetProperty("item", out var item) && item.GetStringOrNull("type") == "agent_message":
+                        text = item.GetStringOrNull("text");
                         break;
                     case "turn.failed" when root.TryGetProperty("error", out var failure):
-                        error = GetString(failure, "message");
+                        turnFailure = failure.GetStringOrNull("message") ?? "the turn failed.";
                         break;
                     case "error":
-                        error = GetString(root, "message");
+                        error = root.GetStringOrNull("message");
                         break;
                 }
             }
         }
 
-        if (error is not null)
-            throw new AgentException(error.Trim());
+        // An "error" event can be a transient notice (such as a reconnect) in a turn that still
+        // completes, so on its own it only explains a failure; it does not cause one.
+        if (turnFailure is not null)
+            throw new AgentException(turnFailure.Trim());
         if (result.ExitCode != 0)
-            throw new AgentException($"codex {CliFailure.Describe(result)}");
+            throw new AgentException(error?.Trim() ?? $"codex {CliFailure.Describe(result)}");
         if (string.IsNullOrWhiteSpace(text))
-            throw new AgentException("codex returned an empty response.");
+            throw new AgentException(error?.Trim() ?? "codex returned an empty response.");
 
         return new(text.Trim(), threadId);
     }
@@ -54,7 +56,7 @@ public static class CodexOutputParser
         try
         {
             document = JsonDocument.Parse(line);
-            return document.RootElement.ValueKind == JsonValueKind.Object;
+            return true;
         }
         catch (JsonException)
         {
@@ -62,9 +64,4 @@ public static class CodexOutputParser
             return false;
         }
     }
-
-    private static string? GetString(JsonElement element, string name)
-        => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
 }

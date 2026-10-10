@@ -34,7 +34,7 @@ internal sealed class FakeProvider(string id, bool installed = true, Exception? 
 
     public string DisplayName => id.ToUpperInvariant();
 
-    public Task<AgentDiscoveryResult> DiscoverAsync(CancellationToken cancellationToken = default)
+    public Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default)
         => discoveryFailure is not null
             ? Task.FromException<AgentDiscoveryResult>(discoveryFailure)
             : Task.FromResult(new AgentDiscoveryResult(Id, DisplayName, installed, installed ? $"/bin/{id}" : null, Detail: installed ? null : "not installed"));

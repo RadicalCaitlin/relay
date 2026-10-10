@@ -14,6 +14,6 @@ public static partial class Mention
         return match.Success;
     }
 
-    [GeneratedRegex(@"^\s*@(?<target>[A-Za-z0-9_-]+)[,:]?(?:\s+(?<body>.*))?$", RegexOptions.Singleline)]
+    [GeneratedRegex(@"^\s*@(?<target>[A-Za-z0-9_-]+)(?:[,:]\s*|\s+|$)(?<body>.*)$", RegexOptions.Singleline)]
     private static partial Regex LeadingMention();
 }

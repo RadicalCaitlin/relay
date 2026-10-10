@@ -11,22 +11,21 @@ internal sealed class StartCommand(
     IAnsiConsole console,
     AgentDiscoveryService discovery,
     IRoomManager rooms,
-    IMessageRouter router) : AsyncCommand
+    MessageRouter router) : AsyncCommand
 {
     private CancellationTokenSource? _turn;
 
     public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        var agents = await discovery.DiscoverAllAsync(cancellationToken);
         var room = rooms.CreateRoom("general");
-        foreach (var agent in agents)
+        foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
             room.AddParticipant(AgentParticipant.Create(agent, Environment.CurrentDirectory));
 
         Console.CancelKeyPress += OnCancelKeyPress;
         try
         {
             WriteHeader(room);
-            await RunLoopAsync(room, agents, cancellationToken);
+            await RunLoopAsync(room, cancellationToken);
         }
         finally
         {
@@ -41,7 +40,7 @@ internal sealed class StartCommand(
         return 0;
     }
 
-    private async Task RunLoopAsync(ChatRoom room, IReadOnlyList<DiscoveredAgent> agents, CancellationToken cancellationToken)
+    private async Task RunLoopAsync(ChatRoom room, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -60,7 +59,7 @@ internal sealed class StartCommand(
                     WriteHelp(room);
                     break;
                 case "/agents":
-                    console.WriteAgentTable(agents);
+                    console.WriteAgentTable(await discovery.DiscoverAllAsync(includeVersion: true, cancellationToken));
                     break;
                 case "/history":
                     foreach (var message in room.Messages)
@@ -70,7 +69,8 @@ internal sealed class StartCommand(
                     console.Clear();
                     WriteHeader(room);
                     break;
-                case ['/', ..]:
+                // Only a bare /word is a mistyped command; "/etc/hosts looks wrong" is a message.
+                case ['/', .. var name] when name.All(char.IsAsciiLetter):
                     console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help.[/]");
                     break;
                 default:
@@ -88,10 +88,11 @@ internal sealed class StartCommand(
         _turn = turn;
         try
         {
-            var routed = Mention.TryParse(input, out _, out _);
-            var result = routed
-                ? await console.Status().StartAsync("Waiting for a reply... (Ctrl+C to cancel)", _ => router.SendHumanMessageAsync(room, input, turn.Token))
-                : await router.SendHumanMessageAsync(room, input, turn.Token);
+            var result = await router.SendHumanMessageAsync(
+                room,
+                input,
+                agent => console.MarkupLine($"[dim]Waiting for {Markup.Escape(agent.DisplayName)}... (Ctrl+C to cancel)[/]"),
+                turn.Token);
 
             if (result.Reply is { } reply)
                 WriteMessage(room, reply);

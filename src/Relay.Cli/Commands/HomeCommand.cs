@@ -10,7 +10,7 @@ internal sealed class HomeCommand(IAnsiConsole console, AgentDiscoveryService di
     public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
         console.WriteBanner();
-        foreach (var (_, result) in await discovery.DiscoverAllAsync(cancellationToken))
+        foreach (var (_, result) in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
             console.WriteStatus(result.DisplayName, result.IsInstalled, result.IsInstalled ? "installed" : "not found");
 
         console.WriteLine();

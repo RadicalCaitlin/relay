@@ -26,7 +26,7 @@ public static class ClaudeOutputParser
             if (root.ValueKind != JsonValueKind.Object)
                 throw new AgentException("claude returned output in an unexpected format.");
 
-            var text = GetString(root, "result");
+            var text = root.GetStringOrNull("result");
             var isError = root.TryGetProperty("is_error", out var flag) && flag.ValueKind == JsonValueKind.True;
 
             // Failures such as "Not logged in" arrive as a normal result object with is_error set.
@@ -35,10 +35,7 @@ public static class ClaudeOutputParser
             if (string.IsNullOrWhiteSpace(text))
                 throw new AgentException("claude returned an empty response.");
 
-            return new(text.Trim(), GetString(root, "session_id"));
+            return new(text.Trim(), root.GetStringOrNull("session_id"));
         }
     }
-
-    private static string? GetString(JsonElement element, string name)
-        => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }

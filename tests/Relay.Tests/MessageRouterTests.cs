@@ -12,7 +12,7 @@ public class MessageRouterTests
     private FakeSession AddAgent(string id, FakeSession? session = null)
     {
         session ??= new FakeSession($"hello from {id}");
-        _room.AddParticipant(new AgentParticipant(id, id.ToUpperInvariant(), id, session));
+        _room.AddParticipant(new AgentParticipant(id, id.ToUpperInvariant(), session));
         return session;
     }
 
@@ -21,6 +21,8 @@ public class MessageRouterTests
     [InlineData("  @Claude: hello", "Claude", "hello")]
     [InlineData("@claude, line one\nline two", "claude", "line one\nline two")]
     [InlineData("@claude", "claude", "")]
+    [InlineData("@claude:fix the build", "claude", "fix the build")]
+    [InlineData("@claude,hello", "claude", "hello")]
     public void Mention_parses_a_leading_target(string text, string target, string body)
     {
         Assert.True(Mention.TryParse(text, out var actualTarget, out var actualBody));
@@ -32,6 +34,7 @@ public class MessageRouterTests
     [InlineData("hello @claude")]
     [InlineData("mail me at a@b.com")]
     [InlineData("@ claude hi")]
+    [InlineData("@claude.md is out of date")]
     public void Mention_ignores_text_without_a_leading_target(string text)
         => Assert.False(Mention.TryParse(text, out _, out _));
 
@@ -83,7 +86,7 @@ public class MessageRouterTests
     [Fact]
     public async Task Unavailable_agent_produces_a_system_notice_with_the_reason()
     {
-        _room.AddParticipant(new AgentParticipant("codex", "Codex", "codex", session: null, "'codex' was not found on PATH"));
+        _room.AddParticipant(new AgentParticipant("codex", "Codex", session: null, "'codex' was not found on PATH"));
 
         var result = await _router.SendHumanMessageAsync(_room, "@codex hi");
 
@@ -103,6 +106,19 @@ public class MessageRouterTests
         Assert.Contains("@gemini", result.Reply.Content);
         Assert.Contains("@claude", result.Reply.Content);
         Assert.Null(result.Message.TargetId);
+    }
+
+    [Fact]
+    public async Task Dispatch_callback_fires_only_when_a_message_is_handed_to_an_agent()
+    {
+        AddAgent("claude");
+        _room.AddParticipant(new AgentParticipant("codex", "Codex", session: null, "not installed"));
+        var dispatched = new List<string>();
+
+        foreach (var text in new[] { "hello", "@gemini hi", "@codex hi", "@claude", "@claude hi" })
+            await _router.SendHumanMessageAsync(_room, text, agent => dispatched.Add(agent.Id));
+
+        Assert.Equal(["claude"], dispatched);
     }
 
     [Fact]
@@ -137,7 +153,7 @@ public class MessageRouterTests
         }));
         using var cts = new CancellationTokenSource();
 
-        var pending = _router.SendHumanMessageAsync(_room, "@claude hi", cts.Token);
+        var pending = _router.SendHumanMessageAsync(_room, "@claude hi", cancellationToken: cts.Token);
         cts.Cancel();
         var result = await pending;
 

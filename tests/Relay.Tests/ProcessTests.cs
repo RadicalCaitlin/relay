@@ -57,6 +57,20 @@ public class ProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task Runner_does_not_wait_for_a_background_process_that_inherited_the_pipes()
+    {
+        var request = OperatingSystem.IsWindows()
+            ? new ProcessRequest("cmd", ["/c", "echo done & start /b ping -n 15 127.0.0.1"])
+            : new ProcessRequest("sh", ["-c", "echo done; sleep 15 &"]);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await _runner.RunAsync(request);
+
+        Assert.StartsWith("done", result.StandardOutput);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"took {stopwatch.Elapsed}");
+    }
+
+    [Fact]
     public void Locator_finds_an_executable_in_a_path_directory()
     {
         var file = Path.Combine(_directory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool");

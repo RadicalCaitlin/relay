@@ -24,6 +24,7 @@ public sealed partial class CliAgentSession(
         if (Interlocked.Exchange(ref _busy, 1) == 1)
             throw new AgentException("The agent is still working on a previous message.");
 
+        var resumed = _sessionId is not null;
         try
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposal.Token);
@@ -37,7 +38,7 @@ public sealed partial class CliAgentSession(
             var reply = parseReply(await runner.RunAsync(request, linked.Token));
 
             // The id is echoed back onto a command line (possibly through a cmd.exe shim),
-            // so anything that is not a plain token is dropped rather than passed along.
+            // so anything that is not a plain token, or that could be read as a flag, is dropped.
             if (reply.SessionId is { } id && SafeSessionId().IsMatch(id))
                 _sessionId = id;
 
@@ -48,6 +49,14 @@ public sealed partial class CliAgentSession(
         {
             Transition(AgentSessionState.Ready);
             throw;
+        }
+        catch (AgentException ex) when (resumed)
+        {
+            // The stored conversation may no longer be resumable (pruned, moved, corrupted), and that
+            // cannot be told apart from a transient failure, so start fresh rather than fail forever.
+            _sessionId = null;
+            Transition(AgentSessionState.Faulted);
+            throw new AgentException($"{ex.Message} (The next message will start a new conversation.)", ex);
         }
         catch
         {
@@ -78,6 +87,6 @@ public sealed partial class CliAgentSession(
             _state = next;
     }
 
-    [GeneratedRegex("^[A-Za-z0-9_-]{1,128}$")]
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
     private static partial Regex SafeSessionId();
 }

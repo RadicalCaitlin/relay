@@ -7,7 +7,8 @@ public interface IAgentProvider
 
     string DisplayName { get; }
 
-    Task<AgentDiscoveryResult> DiscoverAsync(CancellationToken cancellationToken = default);
+    /// <param name="includeVersion">Resolving the version may launch the agent, so it is opt-in.</param>
+    Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default);
 
     IAgentSession CreateSession(AgentDiscoveryResult discovery, string workingDirectory);
 }

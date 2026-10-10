@@ -42,7 +42,7 @@ public class RoomTests
     public void AddParticipant_registers_agents_and_finds_them_case_insensitively()
     {
         var room = _rooms.CreateRoom("general");
-        var participant = new AgentParticipant("claude", "Claude", "claude", new FakeSession("ok"));
+        var participant = new AgentParticipant("claude", "Claude", new FakeSession("ok"));
 
         room.AddParticipant(participant);
 
@@ -56,10 +56,10 @@ public class RoomTests
     public void AddParticipant_rejects_a_duplicate_id()
     {
         var room = _rooms.CreateRoom("general");
-        room.AddParticipant(new AgentParticipant("claude", "Claude", "claude", session: null));
+        room.AddParticipant(new AgentParticipant("claude", "Claude", session: null));
 
         Assert.Throws<InvalidOperationException>(
-            () => room.AddParticipant(new AgentParticipant("Claude", "Other", "claude", session: null)));
+            () => room.AddParticipant(new AgentParticipant("Claude", "Other", session: null)));
     }
 
     [Fact]

@@ -27,12 +27,13 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     /// <exception cref="AgentException">The output does not contain a usable response.</exception>
     public abstract AgentReply ParseReply(ProcessResult result);
 
-    public async Task<AgentDiscoveryResult> DiscoverAsync(CancellationToken cancellationToken = default)
+    public async Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default)
     {
         if (locator.Find(Command) is not { } path)
             return new(Id, DisplayName, IsInstalled: false, Detail: $"'{Command}' was not found on PATH. {InstallHint}");
 
-        return new(Id, DisplayName, IsInstalled: true, path, await GetVersionAsync(path, cancellationToken));
+        var version = includeVersion ? await GetVersionAsync(path, cancellationToken) : null;
+        return new(Id, DisplayName, IsInstalled: true, path, version);
     }
 
     public IAgentSession CreateSession(AgentDiscoveryResult discovery, string workingDirectory)

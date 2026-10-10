@@ -16,7 +16,7 @@ var services = new ServiceCollection()
     .AddRelayAgents()
     .AddSingleton<AgentDiscoveryService>()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
-    .AddSingleton<IMessageRouter, MessageRouter>()
+    .AddSingleton<MessageRouter>()
     .AddSingleton(AnsiConsole.Console);
 
 var version = Assembly.GetExecutingAssembly()
