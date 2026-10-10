@@ -55,7 +55,8 @@ public sealed class MessageRouter
         catch (Exception ex)
         {
             // A provider is a plug-in boundary: whatever it throws must not take the room down with it.
-            return new(message, Notice(room, $"{participant.DisplayName} failed unexpectedly: {ex.Message}"));
+            // The exception type is included because this is a bug, and the user's report is all we will get.
+            return new(message, Notice(room, $"{participant.DisplayName} failed unexpectedly ({ex.GetType().Name}): {ex.Message}"));
         }
     }
 

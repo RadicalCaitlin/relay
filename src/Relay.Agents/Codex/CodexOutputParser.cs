@@ -21,8 +21,9 @@ public static class CodexOutputParser
             using (document)
             {
                 var root = document.RootElement;
-                sawEvent |= root.GetStringOrNull("type") is not null;
-                switch (root.GetStringOrNull("type"))
+                var type = root.GetStringOrNull("type");
+                sawEvent |= type is not null;
+                switch (type)
                 {
                     case "thread.started":
                         threadId = root.GetStringOrNull("thread_id");

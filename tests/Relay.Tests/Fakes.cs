@@ -63,19 +63,35 @@ internal sealed class FakeLocator(string? path) : IExecutableLocator
     public string? Find(string command) => path;
 }
 
-/// <summary>A process that keeps running until the test completes or cancels it.</summary>
+/// <summary>A process that keeps running until the test completes or cancels it. Reusable, one run at a time.</summary>
 internal sealed class BlockingProcessRunner : IProcessRunner
 {
-    private readonly TaskCompletionSource<ProcessResult> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<ProcessResult> _result = New<ProcessResult>();
+    private TaskCompletionSource<bool> _started = New<bool>();
 
-    public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<ProcessRequest> Requests { get; } = [];
 
-    public void Complete(ProcessResult result) => _result.TrySetResult(result);
+    /// <summary>Completes when the next run has begun.</summary>
+    public Task Started => _started.Task;
+
+    public void Complete(ProcessResult result)
+    {
+        _started = New<bool>();
+        _result.TrySetResult(result);
+    }
 
     public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
     {
-        Started.TrySetResult();
-        await using var registration = cancellationToken.Register(() => _result.TrySetCanceled(cancellationToken));
-        return await _result.Task;
+        Requests.Add(request);
+        var result = _result = New<ProcessResult>();
+        _started.TrySetResult(true);
+        await using var registration = cancellationToken.Register(() =>
+        {
+            _started = New<bool>();
+            result.TrySetCanceled(cancellationToken);
+        });
+        return await result.Task;
     }
+
+    private static TaskCompletionSource<T> New<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
