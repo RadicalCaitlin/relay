@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
@@ -13,6 +14,10 @@ internal sealed class StartCommand(
     IRoomManager rooms,
     MessageRouter router) : AsyncCommand
 {
+    // Windows allows about five seconds between a console-close notification and termination.
+    private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(4);
+
+    private readonly ManualResetEventSlim _idle = new(initialState: true);
     private CancellationTokenSource? _turn;
 
     public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
@@ -22,6 +27,8 @@ internal sealed class StartCommand(
             room.AddParticipant(AgentParticipant.Create(agent, Environment.CurrentDirectory));
 
         Console.CancelKeyPress += OnCancelKeyPress;
+        using var terminated = PosixSignalRegistration.Create(PosixSignal.SIGTERM, OnTerminating);
+        using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, OnTerminating);
         try
         {
             WriteHeader(room);
@@ -92,6 +99,7 @@ internal sealed class StartCommand(
     {
         using var turn = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _turn = turn;
+        _idle.Reset();
         try
         {
             AgentParticipant? recipient = null;
@@ -116,6 +124,7 @@ internal sealed class StartCommand(
         finally
         {
             _turn = null;
+            _idle.Set();
         }
     }
 
@@ -140,11 +149,22 @@ internal sealed class StartCommand(
 
     // Ctrl+C cancels the request in flight; with nothing in flight it exits as usual.
     private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+        => e.Cancel = CancelTurn();
+
+    // Relay is being closed (terminal closed, kill, logoff). The agent CLI would otherwise outlive it, so
+    // stop the request in flight and hold the shutdown until its process tree is gone. The signal is not
+    // cancelled, so Relay still exits afterwards.
+    private void OnTerminating(PosixSignalContext context)
+    {
+        if (CancelTurn())
+            _idle.Wait(ShutdownGrace);
+    }
+
+    private bool CancelTurn()
     {
         if (_turn is not { } turn)
-            return;
+            return false;
 
-        e.Cancel = true;
         try
         {
             turn.Cancel();
@@ -152,6 +172,8 @@ internal sealed class StartCommand(
         catch (ObjectDisposedException)
         {
         }
+
+        return true;
     }
 
     private void WriteHeader(ChatRoom room)

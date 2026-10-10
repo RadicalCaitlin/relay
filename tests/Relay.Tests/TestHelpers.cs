@@ -1,0 +1,61 @@
+using System.Diagnostics;
+
+namespace Relay.Tests;
+
+internal static class Poll
+{
+    public static async Task UntilAsync(Func<bool> condition, string description, int timeoutSeconds = 30)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (!condition())
+        {
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(timeoutSeconds), $"Timed out waiting until {description}.");
+            await Task.Delay(100);
+        }
+    }
+
+    /// <summary>Waits for a helper script to write the id of the process it started.</summary>
+    public static async Task<int> ForProcessIdAsync(string pidFile)
+    {
+        var pid = 0;
+        await UntilAsync(() => File.Exists(pidFile) && int.TryParse(ReadShared(pidFile), out pid), "the child process id is written");
+        return pid;
+    }
+
+    public static bool IsRunning(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd().Trim();
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+    }
+}
+
+/// <summary>A test that sends POSIX signals, which Windows has no equivalent for outside a console.</summary>
+public sealed class UnixFactAttribute : FactAttribute
+{
+    public UnixFactAttribute()
+    {
+        if (OperatingSystem.IsWindows())
+            Skip = "Sends POSIX signals. On Windows the kill path is covered by ProcessTests.";
+    }
+}
