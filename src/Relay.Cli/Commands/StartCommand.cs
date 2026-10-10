@@ -1,8 +1,10 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
 using Relay.Core.Routing;
+using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -12,19 +14,29 @@ internal sealed class StartCommand(
     IAnsiConsole console,
     AgentDiscoveryService discovery,
     IRoomManager rooms,
-    MessageRouter router) : AsyncCommand
+    MessageRouter router,
+    WorkspaceTrustStore trustStore) : AsyncCommand<StartCommand.Settings>
 {
+    internal sealed class Settings : CommandSettings
+    {
+        [CommandOption("--trust-workspace")]
+        [Description("Trust the current folder for this session only: also load its own agent settings (hooks, MCP servers, CLAUDE.md), which can run commands. Use 'relay trust' to remember it.")]
+        public bool TrustWorkspace { get; init; }
+    }
+
     // Windows allows about five seconds between a console-close notification and termination.
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(4);
 
     private readonly ManualResetEventSlim _idle = new(initialState: true);
     private CancellationTokenSource? _turn;
+    private string _folderStatus = string.Empty;
 
-    public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
+        var options = new AgentSessionOptions(Environment.CurrentDirectory, ResolveTrust(settings, Environment.CurrentDirectory));
         var room = rooms.CreateRoom("general");
         foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
-            room.AddParticipant(AgentParticipant.Create(agent, Environment.CurrentDirectory));
+            room.AddParticipant(AgentParticipant.Create(agent, options));
 
         Console.CancelKeyPress += OnCancelKeyPress;
         using var terminated = PosixSignalRegistration.Create(PosixSignal.SIGTERM, OnTerminating);
@@ -45,6 +57,56 @@ internal sealed class StartCommand(
         }
 
         return 0;
+    }
+
+    // The agent CLIs skip their own trust prompt when run non-interactively, so Relay keeps its own
+    // record. A folder is untrusted until the user says otherwise, and a yes is remembered.
+    private bool ResolveTrust(Settings settings, string folder)
+    {
+        var name = RelayConsole.Safe(folder);
+        var trusted = true;
+        if (settings.TrustWorkspace)
+            _folderStatus = $"[dim]Folder: {name} (trusted for this session)[/]";
+        else if (trustStore.IsTrusted(folder))
+            _folderStatus = $"[dim]Folder: {name} (trusted)[/]";
+        else if (AskToTrust(name))
+            _folderStatus = Remember(folder)
+                ? $"[dim]Folder: {name} (trusted)[/]"
+                : $"[dim]Folder: {name} (trusted for this session)[/]";
+        else
+        {
+            trusted = false;
+            _folderStatus = $"[yellow]Folder: {name} (not trusted: its agent settings, hooks, MCP servers and CLAUDE.md are ignored; run 'relay trust' here to load them)[/]";
+        }
+
+        return trusted;
+    }
+
+    // Without a person to ask (redirected input), the folder stays untrusted.
+    private bool AskToTrust(string name)
+    {
+        if (Console.IsInputRedirected)
+            return false;
+
+        console.MarkupLine($"Agents will run in [bold]{name}[/].");
+        console.MarkupLine("[dim]A trusted folder can configure the agents: its hooks and MCP servers run commands on your machine.[/]");
+        var trusted = console.Confirm("Do you trust the files in this folder?", defaultValue: false);
+        console.WriteLine();
+        return trusted;
+    }
+
+    private bool Remember(string folder)
+    {
+        try
+        {
+            trustStore.Trust(folder);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            console.MarkupLine($"[yellow]Could not remember this choice: {RelayConsole.Safe(ex.Message)}[/]");
+            return false;
+        }
     }
 
     private async Task RunLoopAsync(ChatRoom room, CancellationToken cancellationToken)
@@ -183,6 +245,7 @@ internal sealed class StartCommand(
             console.WriteStatus(participant.DisplayName, participant.Session is not null, Describe(participant.State));
 
         console.WriteLine();
+        console.MarkupLine(_folderStatus);
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
     }
@@ -201,9 +264,7 @@ internal sealed class StartCommand(
 
     private void WriteMessage(ChatRoom room, ChatMessage message, bool includeHuman = false)
     {
-        // Agent output is untrusted: drop control characters so it cannot drive the terminal with escape sequences.
-        var printable = string.Concat(message.Content.Where(c => !char.IsControl(c) || c is '\n' or '\t'));
-        var content = Markup.Escape(printable);
+        var content = RelayConsole.Safe(message.Content);
         switch (message.SenderType)
         {
             case SenderType.Human when includeHuman:

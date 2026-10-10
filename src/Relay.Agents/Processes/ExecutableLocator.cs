@@ -20,11 +20,17 @@ public sealed class PathExecutableLocator : IExecutableLocator
             return null;
 
         var directories = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var directory in directories)
+        foreach (var entry in directories)
         {
+            // A relative entry such as "." resolves against the working directory, which may be an
+            // untrusted repository carrying its own "claude" executable.
+            var directory = entry.Trim('"');
+            if (!Path.IsPathFullyQualified(directory))
+                continue;
+
             foreach (var extension in Extensions(pathExt))
             {
-                var candidate = Path.Combine(directory.Trim('"'), command + extension);
+                var candidate = Path.Combine(directory, command + extension);
                 if (IsExecutable(candidate))
                     return Path.GetFullPath(candidate);
             }

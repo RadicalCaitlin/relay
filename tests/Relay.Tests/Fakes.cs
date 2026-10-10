@@ -43,7 +43,7 @@ internal sealed class FakeProvider(string id, bool installed = true, Exception? 
             ? Task.FromException<AgentDiscoveryResult>(discoveryFailure)
             : Task.FromResult(new AgentDiscoveryResult(Id, DisplayName, installed, installed ? $"/bin/{id}" : null, Detail: installed ? null : "not installed"));
 
-    public IAgentSession CreateSession(AgentDiscoveryResult discovery, string workingDirectory) => Session;
+    public IAgentSession CreateSession(AgentDiscoveryResult discovery, AgentSessionOptions options) => Session;
 }
 
 internal sealed class FakeProcessRunner(Func<ProcessRequest, ProcessResult> run) : IProcessRunner

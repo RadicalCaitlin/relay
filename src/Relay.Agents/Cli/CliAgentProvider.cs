@@ -22,7 +22,7 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     protected abstract string InstallHint { get; }
 
     /// <summary>Arguments for one turn. The message itself is always written to stdin, never passed here.</summary>
-    public abstract IReadOnlyList<string> BuildArguments(string? sessionId);
+    public abstract IReadOnlyList<string> BuildArguments(string? sessionId, AgentSessionOptions options);
 
     /// <exception cref="AgentException">The output does not contain a usable response.</exception>
     public abstract AgentReply ParseReply(ProcessResult result);
@@ -36,11 +36,11 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
         return new(Id, DisplayName, IsInstalled: true, path, version);
     }
 
-    public IAgentSession CreateSession(AgentDiscoveryResult discovery, string workingDirectory)
+    public IAgentSession CreateSession(AgentDiscoveryResult discovery, AgentSessionOptions options)
     {
         if (discovery.ExecutablePath is not { } path)
             throw new InvalidOperationException($"{DisplayName} is not installed.");
-        return new CliAgentSession(runner, path, workingDirectory, BuildArguments, ParseReply);
+        return new CliAgentSession(runner, path, options.WorkingDirectory, sessionId => BuildArguments(sessionId, options), ParseReply);
     }
 
     private async Task<string?> GetVersionAsync(string path, CancellationToken cancellationToken)

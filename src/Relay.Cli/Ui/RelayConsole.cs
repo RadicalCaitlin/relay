@@ -5,6 +5,17 @@ namespace Relay.Cli.Ui;
 
 internal static class RelayConsole
 {
+    /// <summary>
+    /// Makes text that Relay did not write (agent replies, CLI errors, version strings) safe to print:
+    /// removes control characters, so it cannot send escape sequences to the terminal, and bidirectional
+    /// overrides, so it cannot reorder what is shown. Then escapes Spectre markup.
+    /// </summary>
+    public static string Safe(string text)
+        => Markup.Escape(string.Concat(text.Where(c => c is '\n' or '\t' || !(char.IsControl(c) || IsBidiControl(c)))));
+
+    private static bool IsBidiControl(char c)
+        => c is (>= '‪' and <= '‮') or (>= '⁦' and <= '⁩') or '‎' or '‏' or '؜';
+
     public static void WriteBanner(this IAnsiConsole console)
     {
         var title = new Rows(
@@ -30,11 +41,11 @@ internal static class RelayConsole
         foreach (var (_, result) in agents)
         {
             table.AddRow(
-                Markup.Escape(result.DisplayName),
-                Markup.Escape($"@{result.ProviderId}"),
+                Safe(result.DisplayName),
+                Safe($"@{result.ProviderId}"),
                 result.IsInstalled ? "[green]installed[/]" : "[yellow]not found[/]",
-                Markup.Escape(result.Version ?? "-"),
-                Markup.Escape(result.ExecutablePath ?? result.Detail ?? "-"));
+                Safe(result.Version ?? "-"),
+                Safe(result.ExecutablePath ?? result.Detail ?? "-"));
         }
 
         console.Write(table);

@@ -67,7 +67,7 @@ public class RoomTests
     {
         var discovery = new AgentDiscoveryService([new FakeProvider("claude"), new FakeProvider("codex", installed: false)]);
 
-        var participants = (await discovery.DiscoverAllAsync()).Select(a => AgentParticipant.Create(a, ".")).ToList();
+        var participants = (await discovery.DiscoverAllAsync()).Select(a => AgentParticipant.Create(a, new AgentSessionOptions("."))).ToList();
 
         Assert.Equal(AgentSessionState.Ready, participants[0].State);
         Assert.Null(participants[1].Session);

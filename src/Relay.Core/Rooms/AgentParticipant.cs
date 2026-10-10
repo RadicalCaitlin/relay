@@ -20,11 +20,11 @@ public sealed class AgentParticipant(
 
     public AgentSessionState State => Session?.State ?? AgentSessionState.Unavailable;
 
-    public static AgentParticipant Create(DiscoveredAgent agent, string workingDirectory)
+    public static AgentParticipant Create(DiscoveredAgent agent, AgentSessionOptions options)
     {
         var (provider, result) = agent;
         return result.IsInstalled
-            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, workingDirectory))
+            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, options))
             : new(provider.Id, provider.DisplayName, session: null, result.Detail ?? "not installed");
     }
 }

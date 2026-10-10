@@ -7,6 +7,7 @@ using Relay.Cli.Infrastructure;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
 using Relay.Core.Routing;
+using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -17,6 +18,7 @@ var services = new ServiceCollection()
     .AddSingleton<AgentDiscoveryService>()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
     .AddSingleton<MessageRouter>()
+    .AddSingleton(new WorkspaceTrustStore(WorkspaceTrustStore.DefaultFilePath()))
     .AddSingleton(AnsiConsole.Console);
 
 var version = Assembly.GetExecutingAssembly()
@@ -29,6 +31,7 @@ app.Configure(config =>
     config.SetApplicationVersion(version);
     config.AddCommand<AgentsCommand>("agents").WithDescription("List agent providers and whether they are installed.");
     config.AddCommand<StartCommand>("start").WithDescription("Start an interactive chatroom.");
+    config.AddCommand<TrustCommand>("trust").WithDescription("Trust the current folder, so agents load its own settings.");
 });
 
 return await app.RunAsync(args);

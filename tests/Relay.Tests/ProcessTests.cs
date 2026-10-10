@@ -115,6 +115,49 @@ public class ProcessTests : IDisposable
         Assert.Null(PathExecutableLocator.Find("relaytool", _directory, ".EXE;.CMD"));
     }
 
+    [Fact]
+    public void Locator_ignores_relative_path_entries_so_the_working_directory_cannot_supply_the_agent()
+    {
+        var file = Path.Combine(_directory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool");
+        File.WriteAllText(file, string.Empty);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var relative = Path.GetRelativePath(Environment.CurrentDirectory, _directory);
+
+        Assert.Null(PathExecutableLocator.Find("relaytool", string.Join(Path.PathSeparator, ".", relative), ".EXE;.CMD"));
+        Assert.NotNull(PathExecutableLocator.Find("relaytool", _directory, ".EXE;.CMD"));
+    }
+
+    [Fact]
+    public async Task Runner_does_not_let_a_cmd_shim_pick_up_a_program_planted_in_the_working_directory()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        // Mirrors the npm shims: claude.cmd calls "node" by bare name, and cmd.exe would look in the
+        // working directory (here an untrusted repository) before PATH.
+        var shimDirectory = Directory.CreateDirectory(Path.Combine(_directory, "shim")).FullName;
+        var repository = Directory.CreateDirectory(Path.Combine(_directory, "repo")).FullName;
+        File.WriteAllText(Path.Combine(shimDirectory, "agent.cmd"), "@relayhelper\r\n");
+        File.WriteAllText(Path.Combine(repository, "relayhelper.cmd"), "@echo planted\r\n");
+
+        // Some terminals already set the variable the runner relies on; clear it so the runner is what protects us.
+        const string variable = "NoDefaultCurrentDirectoryInExePath";
+        var inherited = Environment.GetEnvironmentVariable(variable);
+        Environment.SetEnvironmentVariable(variable, null);
+        try
+        {
+            var result = await _runner.RunAsync(new(Path.Combine(shimDirectory, "agent.cmd"), []) { WorkingDirectory = repository });
+
+            Assert.DoesNotContain("planted", result.StandardOutput);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, inherited);
+        }
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
