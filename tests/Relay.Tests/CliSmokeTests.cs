@@ -83,11 +83,14 @@ public sealed class CliSmokeTests : IDisposable
     [Fact]
     public async Task Unknown_command_or_option_fails_with_a_nonzero_exit_code()
     {
-        var (unknownCommand, _) = await _harness.RunAsync(["frobnicate"]);
-        var (unknownOption, _) = await _harness.RunAsync(["start", "--no-such-option"]);
+        var (unknownCommand, commandOutput) = await _harness.RunAsync(["frobnicate"]);
+        var (unknownOption, optionOutput) = await _harness.RunAsync(["start", "--no-such-option"], "/exit");
 
         Assert.NotEqual(0, unknownCommand);
+        AssertShown("Unknown command 'frobnicate'", commandOutput);
         Assert.NotEqual(0, unknownOption);
+        AssertShown("Unknown option 'no-such-option'", optionOutput);
+        AssertNotShown("# general", optionOutput);
     }
 
     [Fact]
@@ -179,6 +182,8 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("/reset", output);
         AssertShown("@claude <message>", output);
         AssertShown("9.9.9 (fake claude)", output);
+        // Once when the room opens and once more when /clear redraws it.
+        Assert.Equal(2, output.Split("# general").Length - 1);
         var afterClear = output[output.LastIndexOf("# general", StringComparison.Ordinal)..];
         AssertShown("You: @claude ping", afterClear);
         AssertShown("Claude: pong", afterClear);
@@ -225,8 +230,6 @@ public sealed class CliSmokeTests : IDisposable
     public async Task Agent_recovers_after_a_failure_and_keeps_its_conversation()
     {
         _harness.InstallAgent("claude", ClaudeReply("pong"));
-        await _harness.ChatAsync(["start"], "@claude one", "/exit");
-        File.Delete(_harness.PathTo("claude-args.txt"));
 
         // One session: a good turn, then the agent starts failing, then it works again.
         var relay = _harness.Start("start");

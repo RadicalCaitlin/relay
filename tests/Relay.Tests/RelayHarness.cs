@@ -6,8 +6,8 @@ namespace Relay.Tests;
 
 /// <summary>
 /// Runs the built <c>relay</c> CLI as a separate process in a scratch directory. Its PATH holds only
-/// that directory and the operating system's own tools, so the only agents Relay can find are the
-/// fakes a test installs, whether or not real ones are installed on the machine.
+/// that directory and the few tools the fake agents' scripts call, so the only agents Relay can find
+/// are the fakes a test installs, whether or not real ones are installed on the machine.
 /// </summary>
 internal sealed class RelayHarness : IDisposable
 {
@@ -15,9 +15,14 @@ internal sealed class RelayHarness : IDisposable
     public const string CodexThreadId = "01a12603-b1c3-7d00-bf0c-d5720f7caecd";
 
     private readonly StringBuilder _output = new();
+    private readonly string _toolPath;
     private Process? _relay;
 
-    public RelayHarness() => WorkingDirectory = Directory;
+    public RelayHarness()
+    {
+        WorkingDirectory = Directory;
+        _toolPath = CreateToolPath();
+    }
 
     public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("relay-e2e-").FullName;
 
@@ -104,10 +109,10 @@ internal sealed class RelayHarness : IDisposable
 
     /// <summary>The arguments of each turn sent to an agent installed with <see cref="InstallAgent"/>, oldest first.</summary>
     public IReadOnlyList<string> Invocations(string name)
-        => File.Exists(PathTo($"{name}-args.txt")) ? File.ReadAllLines(PathTo($"{name}-args.txt")).Select(l => l.Trim()).ToArray() : [];
+        => Poll.ReadShared(PathTo($"{name}-args.txt")).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>What the most recent turn wrote to the agent's standard input.</summary>
-    public string StandardInput(string name) => File.ReadAllText(PathTo($"{name}-stdin.txt"));
+    public string StandardInput(string name) => Poll.ReadShared(PathTo($"{name}-stdin.txt"));
 
     /// <summary>Installs a fake agent CLI with its own behaviour.</summary>
     public void InstallAgentScript(string name, string unixScript, string windowsScript)
@@ -137,7 +142,7 @@ internal sealed class RelayHarness : IDisposable
         startInfo.ArgumentList.Add(RelayAssembly());
         foreach (var argument in arguments)
             startInfo.ArgumentList.Add(argument);
-        startInfo.Environment["PATH"] = Directory + Path.PathSeparator + SystemPath;
+        startInfo.Environment["PATH"] = Directory + Path.PathSeparator + _toolPath;
         startInfo.Environment["RELAY_TEST_DIR"] = Directory;
         // Keep the developer's real trusted folders out of the tests, and the tests out of theirs.
         startInfo.Environment["RELAY_HOME"] = PathTo("relay-home");
@@ -189,10 +194,25 @@ internal sealed class RelayHarness : IDisposable
     private static string DotNet { get; } = new PathExecutableLocator().Find("dotnet")
         ?? throw new InvalidOperationException("dotnet was not found on PATH.");
 
-    // Just enough for the fake agents' scripts (cat, sleep, findstr, ping), and nothing a real agent lives in.
-    private static string SystemPath { get; } = OperatingSystem.IsWindows()
-        ? Environment.SystemDirectory
-        : string.Join(Path.PathSeparator, "/usr/bin", "/bin");
+    // The tools the fake agents' scripts call by name, and nothing else. On Unix that cannot be /usr/bin
+    // or /bin themselves, because a real agent can be installed there, so the tools are linked into a
+    // folder of our own. The scripts start with an absolute #!/bin/sh, so the shell needs no entry.
+    // On Windows the scripts need findstr from System32, where no agent CLI is ever installed.
+    private string CreateToolPath()
+    {
+        if (OperatingSystem.IsWindows())
+            return Environment.SystemDirectory;
+
+        var tools = System.IO.Directory.CreateDirectory(PathTo("tools")).FullName;
+        foreach (var tool in (string[])["cat", "sleep"])
+        {
+            var target = PathExecutableLocator.Find(tool, "/usr/bin:/bin", pathExt: null)
+                ?? throw new InvalidOperationException($"{tool} was not found in /usr/bin or /bin.");
+            File.CreateSymbolicLink(Path.Combine(tools, tool), target);
+        }
+
+        return tools;
+    }
 
     private void Stop()
     {
