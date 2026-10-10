@@ -15,6 +15,9 @@ public interface IAgentSession : IAsyncDisposable
 
     /// <exception cref="AgentException">The agent could not produce a response.</exception>
     Task<string> SendAsync(string message, CancellationToken cancellationToken = default);
+
+    /// <summary>Forgets the agent's conversation so the next message starts a new one.</summary>
+    void Reset();
 }
 
 /// <summary>A failure whose message is safe and useful to show to the user.</summary>

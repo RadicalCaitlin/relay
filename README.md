@@ -68,6 +68,8 @@ Inside the chatroom:
 | `/agents`           | Show discovered agents                              |
 | `/history`          | Replay the room's message history                   |
 | `/clear`            | Clear the display (history is kept)                 |
+| `/reset`            | Start a new conversation with every agent           |
+| `/reset <agent>`    | Start a new conversation with one agent             |
 | `/help`             | Show the command list                               |
 | `/exit`             | Leave the chatroom                                  |
 | `Ctrl+C`            | Cancel the request in flight; exit when idle        |
@@ -88,7 +90,7 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 - One room (`general`), held in memory. Nothing is persisted between runs.
 - An agent sees only the messages addressed to it, not the rest of the room. Each agent keeps
-  its own conversation for the lifetime of the room.
+  its own conversation for the lifetime of the room, or until you `/reset` it.
 - Replies arrive whole when the agent finishes; there is no streaming.
 - Agents cannot answer permission prompts through Relay. Tool use that would need approval is
   declined by the agent CLI, so agents are effectively limited to what their own configuration

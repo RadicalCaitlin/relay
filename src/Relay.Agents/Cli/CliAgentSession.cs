@@ -24,7 +24,6 @@ public sealed partial class CliAgentSession(
         if (Interlocked.Exchange(ref _busy, 1) == 1)
             throw new AgentException("The agent is still working on a previous message.");
 
-        var resumed = _sessionId is not null;
         try
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposal.Token);
@@ -50,14 +49,6 @@ public sealed partial class CliAgentSession(
             Transition(AgentSessionState.Ready);
             throw;
         }
-        catch (AgentException ex) when (resumed)
-        {
-            // The stored conversation may no longer be resumable (pruned, moved, corrupted), and that
-            // cannot be told apart from a transient failure, so start fresh rather than fail forever.
-            _sessionId = null;
-            Transition(AgentSessionState.Faulted);
-            throw new AgentException($"{ex.Message} (The next message will start a new conversation.)", ex);
-        }
         catch
         {
             Transition(AgentSessionState.Faulted);
@@ -67,6 +58,13 @@ public sealed partial class CliAgentSession(
         {
             Volatile.Write(ref _busy, 0);
         }
+    }
+
+    public void Reset()
+    {
+        _sessionId = null;
+        if (_state == AgentSessionState.Faulted)
+            _state = AgentSessionState.Ready;
     }
 
     public ValueTask DisposeAsync()

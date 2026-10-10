@@ -69,6 +69,12 @@ internal sealed class StartCommand(
                     console.Clear();
                     WriteHeader(room);
                     break;
+                case "/reset":
+                    Reset(room, target: null);
+                    break;
+                case var command when command.StartsWith("/reset "):
+                    Reset(room, command["/reset ".Length..].Trim().TrimStart('@'));
+                    break;
                 // Only a bare /word is a mistyped command; "/etc/hosts looks wrong" is a message.
                 case ['/', .. var name] when name.All(char.IsAsciiLetter):
                     console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help.[/]");
@@ -88,20 +94,47 @@ internal sealed class StartCommand(
         _turn = turn;
         try
         {
+            AgentParticipant? recipient = null;
             var result = await router.SendHumanMessageAsync(
                 room,
                 input,
-                agent => console.MarkupLine($"[dim]Waiting for {Markup.Escape(agent.DisplayName)}... (Ctrl+C to cancel)[/]"),
+                agent =>
+                {
+                    recipient = agent;
+                    console.MarkupLine($"[dim]Waiting for {Markup.Escape(agent.DisplayName)}... (Ctrl+C to cancel)[/]");
+                },
                 turn.Token);
 
             if (result.Reply is { } reply)
                 WriteMessage(room, reply);
             else
                 console.MarkupLine("[dim]Recorded. Address an agent to get a reply, e.g. @claude hello[/]");
+
+            if (recipient?.State == AgentSessionState.Faulted)
+                console.MarkupLine($"[dim]If this keeps happening, /reset {Markup.Escape(recipient.Id)} starts a new conversation with {Markup.Escape(recipient.DisplayName)}.[/]");
         }
         finally
         {
             _turn = null;
+        }
+    }
+
+    private void Reset(ChatRoom room, string? target)
+    {
+        List<AgentParticipant> targets = target is null
+            ? [.. room.Participants.Where(p => p.Session is not null)]
+            : room.FindParticipant(target) is { Session: not null } named ? [named] : [];
+
+        if (targets.Count == 0)
+        {
+            console.MarkupLine("[yellow]No connected agent to reset. Use /reset for all agents or /reset <agent> for one.[/]");
+            return;
+        }
+
+        foreach (var participant in targets)
+        {
+            participant.Session!.Reset();
+            WriteMessage(room, room.AddMessage(ChatRoom.SystemId, SenderType.System, $"{participant.DisplayName} will start a new conversation with the next message."));
         }
     }
 
@@ -138,6 +171,7 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/agents[/]    Show discovered agents");
         console.MarkupLine("[bold]/history[/]   Replay the room's message history");
         console.MarkupLine("[bold]/clear[/]     Clear the display (history is kept)");
+        console.MarkupLine("[bold]/reset[/]     Start new agent conversations (/reset <agent> for one)");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)
             console.MarkupLine($"[bold]@{Markup.Escape(participant.Id)} <message>[/]  Send a message to {Markup.Escape(participant.DisplayName)}");

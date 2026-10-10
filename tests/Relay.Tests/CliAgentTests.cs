@@ -136,23 +136,35 @@ public class CliAgentTests
     }
 
     [Fact]
-    public async Task Session_starts_a_new_conversation_after_a_resumed_turn_fails()
+    public async Task Session_keeps_its_conversation_after_a_failure_until_it_is_reset()
     {
         var fail = false;
-        var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "No conversation found") : Ok(ClaudeOk));
+        var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "rate limited") : Ok(ClaudeOk));
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
         await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
         await session.SendAsync("first");
 
         fail = true;
-        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("second"));
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("second"));
         fail = false;
         await session.SendAsync("third");
+        session.Reset();
+        await session.SendAsync("fourth");
 
-        Assert.Contains("No conversation found", ex.Message);
-        Assert.Contains("new conversation", ex.Message);
-        Assert.Contains("--resume", runner.Requests[1].Arguments);
-        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[2].Arguments);
+        Assert.Contains("--resume", runner.Requests[2].Arguments);
+        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[3].Arguments);
+    }
+
+    [Fact]
+    public async Task Reset_clears_a_faulted_state()
+    {
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(1, string.Empty, "boom")));
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi"));
+
+        session.Reset();
+
+        Assert.Equal(AgentSessionState.Ready, session.State);
     }
 
     [Fact]

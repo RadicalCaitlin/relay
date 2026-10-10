@@ -19,6 +19,10 @@ internal sealed class FakeSession(Func<string, CancellationToken, Task<string>> 
         return respond(message, cancellationToken);
     }
 
+    public void Reset()
+    {
+    }
+
     public ValueTask DisposeAsync()
     {
         State = AgentSessionState.Closed;
