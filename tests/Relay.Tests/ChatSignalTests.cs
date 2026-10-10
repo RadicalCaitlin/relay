@@ -14,7 +14,8 @@ public sealed class ChatSignalTests : IDisposable
     public ChatSignalTests()
     {
         _pidFile = _harness.PathTo("child.pid");
-        _harness.FakeClaude(
+        _harness.InstallAgentScript(
+            "claude",
             unixScript: "#!/bin/sh\nsleep 300 &\necho $! > \"$RELAY_TEST_DIR/child.pid\"\nwait\n",
             windowsScript: "@exit /b 1\n");
     }

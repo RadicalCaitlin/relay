@@ -73,8 +73,14 @@ The build must stay free of warnings and the tests must pass before a change is 
 - Test output parsers with captured sample output.
 - `ProcessRunner` tests may launch only tools guaranteed to exist (`dotnet`, `ping`, `sleep`, `sh`,
   and Windows PowerShell on Windows).
-- `ChatSecurityTests` and `ChatSignalTests` run the built CLI through `RelayHarness`, with a fake
-  `claude` first on `PATH`. Use it for anything that must hold end to end.
+- `CliSmokeTests`, `ChatSecurityTests` and `ChatSignalTests` run the built CLI through `RelayHarness`.
+  Use it for anything that must hold end to end, and add a smoke test for every new command or
+  chat command.
+- `RelayHarness` gives Relay a `PATH` holding only its scratch folder and the operating system's
+  own tools, so the tests behave the same whether or not real agent CLIs are installed.
+  `InstallAgent` adds a fake `claude` or `codex` that records its arguments and standard input and
+  prints whatever the test tells it to.
+- Assert on Relay's output with `RelayHarness.AssertShown`, which ignores line wrapping.
 - `ChatSignalTests` sends the CLI real signals.
   It is marked `[UnixFact]` and is skipped on Windows, where signals cannot be sent to a process.
 

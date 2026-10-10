@@ -2,45 +2,31 @@ namespace Relay.Tests;
 
 /// <summary>
 /// Security regression tests that run the real <c>relay start</c> against a fake <c>claude</c>
-/// which records how it was invoked and replies with whatever <c>reply.json</c> holds.
+/// which records how it was invoked and replies with whatever the test tells it to.
 /// </summary>
 public sealed class ChatSecurityTests : IDisposable
 {
     private readonly RelayHarness _harness = new();
 
-    public ChatSecurityTests()
-    {
-        _harness.FakeClaude(
-            unixScript: "#!/bin/sh\necho \"$@\" >> \"$RELAY_TEST_DIR/args.txt\"\ncat > \"$RELAY_TEST_DIR/stdin.txt\"\ncat \"$RELAY_TEST_DIR/reply.json\"\n",
-            windowsScript: "@echo off\necho %* >> \"%RELAY_TEST_DIR%\\args.txt\"\nfindstr \"^\" > \"%RELAY_TEST_DIR%\\stdin.txt\"\ntype \"%RELAY_TEST_DIR%\\reply.json\"\n");
-        Reply("pong");
-    }
+    public ChatSecurityTests() => Reply("pong");
 
     public void Dispose() => _harness.Dispose();
 
-    private string InvocationArguments => File.ReadAllText(_harness.PathTo("args.txt"));
-
-    // xUnit truncates long strings in its own messages, so these print everything Relay wrote.
-    private static void AssertShown(string expected, string output)
-        => Assert.True(RelayHarness.Squash(output).Contains(RelayHarness.Squash(expected)), $"Expected \"{expected}\" in:\n{output}");
-
-    private static void AssertNotShown(string unexpected, string output)
-        => Assert.False(RelayHarness.Squash(output).Contains(RelayHarness.Squash(unexpected)), $"Did not expect \"{unexpected}\" in:\n{output}");
+    private string InvocationArguments => string.Join('\n', _harness.Invocations("claude"));
 
     private string TrustFile => Path.Combine(_harness.PathTo("relay-home"), "trusted-folders.json");
 
     // The reply is written with JSON escapes so the file itself stays plain ASCII.
-    private void Reply(string jsonEscapedResult)
-        => File.WriteAllText(_harness.PathTo("reply.json"), $$"""{"is_error":false,"result":"{{jsonEscapedResult}}","session_id":"ce6f4686-9f97-4a98-8fb4-3125a2b0e671"}""");
+    private void Reply(string jsonEscapedResult) => _harness.InstallAgent("claude", RelayHarness.ClaudeReply(jsonEscapedResult));
 
     [Fact]
     public async Task Untrusted_folder_keeps_claude_from_loading_the_folders_own_settings()
     {
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        AssertShown("Claude: pong", output);
+        RelayHarness.AssertShown("Claude: pong", output);
         Assert.Contains("--setting-sources user", InvocationArguments);
-        AssertShown("(not trusted:", output);
+        RelayHarness.AssertShown("(not trusted:", output);
     }
 
     [Fact]
@@ -48,29 +34,29 @@ public sealed class ChatSecurityTests : IDisposable
     {
         var output = await _harness.ChatAsync(["start", "--trust-workspace"], "@claude hi", "/exit");
 
-        AssertShown("Claude: pong", output);
+        RelayHarness.AssertShown("Claude: pong", output);
         Assert.DoesNotContain("--setting-sources", InvocationArguments);
-        AssertShown("(trusted for this session)", output);
+        RelayHarness.AssertShown("(trusted for this session)", output);
         Assert.False(File.Exists(TrustFile));
     }
 
     [Fact]
     public async Task Trust_command_is_remembered_by_later_sessions_until_it_is_removed()
     {
-        AssertShown("No trusted folders.", await _harness.ChatAsync(["trust", "--list"]));
+        RelayHarness.AssertShown("No trusted folders.", await _harness.ChatAsync(["trust", "--list"]));
         Assert.Contains("Trusted:", await _harness.ChatAsync(["trust"]));
         // The folder name only: macOS reports the temp folder through a /private symlink.
-        AssertShown(Path.GetFileName(_harness.Directory), await _harness.ChatAsync(["trust", "--list"]));
+        RelayHarness.AssertShown(Path.GetFileName(_harness.Directory), await _harness.ChatAsync(["trust", "--list"]));
 
         await _harness.ChatAsync(["start"], "@claude hi", "/exit");
         Assert.DoesNotContain("--setting-sources", InvocationArguments);
 
-        File.Delete(_harness.PathTo("args.txt"));
+        File.Delete(_harness.PathTo("claude-args.txt"));
         Assert.Contains("No longer trusted:", await _harness.ChatAsync(["trust", "--remove"]));
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
         Assert.Contains("--setting-sources user", InvocationArguments);
-        AssertShown("(not trusted:", output);
+        RelayHarness.AssertShown("(not trusted:", output);
     }
 
     [Fact]
@@ -81,8 +67,8 @@ public sealed class ChatSecurityTests : IDisposable
         var (exitCode, output) = await _harness.RunAsync(["trust", "--remove", "--list"]);
 
         Assert.NotEqual(0, exitCode);
-        AssertShown("--remove and --list cannot be used together", output);
-        AssertShown(Path.GetFileName(_harness.Directory), await _harness.ChatAsync(["trust", "--list"]));
+        RelayHarness.AssertShown("--remove and --list cannot be used together", output);
+        RelayHarness.AssertShown(Path.GetFileName(_harness.Directory), await _harness.ChatAsync(["trust", "--list"]));
     }
 
     [UnixFact]
@@ -96,7 +82,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         Assert.DoesNotContain(start.Split('\n'), line => line.Trim() == forged);
         Assert.DoesNotContain(trust.Split('\n'), line => line.Trim() == forged);
-        AssertShown("(not trusted:", start);
+        RelayHarness.AssertShown("(not trusted:", start);
     }
 
     [Fact]
@@ -115,7 +101,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         await _harness.ChatAsync(["start"], $"@claude {message}", "/exit");
 
-        Assert.Contains(message, File.ReadAllText(_harness.PathTo("stdin.txt")));
+        Assert.Contains(message, _harness.StandardInput("claude"));
         Assert.DoesNotContain("dangerously", InvocationArguments);
         Assert.DoesNotContain("injected", InvocationArguments);
     }
@@ -128,7 +114,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        AssertShown("Claude: safe[2J]0;pwnedtextend31m", output);
+        RelayHarness.AssertShown("Claude: safe[2J]0;pwnedtextend31m", output);
         Assert.DoesNotContain('\u001b', output);
         Assert.DoesNotContain('\u0007', output);
         Assert.DoesNotContain('\u202E', output);
@@ -142,7 +128,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        AssertShown("Claude: [red]not markup[/] [link=https://example.com]x[/]", output);
+        RelayHarness.AssertShown("Claude: [red]not markup[/] [link=https://example.com]x[/]", output);
     }
 
     [Fact]
@@ -152,7 +138,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        Assert.Single(File.ReadAllLines(_harness.PathTo("args.txt")));
-        AssertNotShown("will start a new conversation", output);
+        Assert.Single(_harness.Invocations("claude"));
+        RelayHarness.AssertNotShown("will start a new conversation", output);
     }
 }
