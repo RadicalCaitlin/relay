@@ -20,6 +20,18 @@ public sealed class AgentParticipant(
 
     public AgentSessionState State => Session?.State ?? AgentSessionState.Unavailable;
 
+    private ChatRoom? _room;
+
+    /// <summary>The one room this agent takes part in, once it has been added to it.</summary>
+    public ChatRoom? Room => _room;
+
+    // Atomic, because two rooms adding the same agent each hold only their own lock.
+    internal void Join(ChatRoom room)
+    {
+        if (Interlocked.CompareExchange(ref _room, room, null) is { } current)
+            throw new InvalidOperationException($"'{Id}' already takes part in room '{current.Name}'. An agent's session is never shared between rooms.");
+    }
+
     public static AgentParticipant Create(DiscoveredAgent agent, AgentSessionOptions options)
     {
         var (provider, result) = agent;

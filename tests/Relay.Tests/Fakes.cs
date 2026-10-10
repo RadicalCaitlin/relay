@@ -13,6 +13,8 @@ internal sealed class FakeSession(Func<string, CancellationToken, Task<string>> 
 
     public AgentSessionState State { get; private set; } = AgentSessionState.Ready;
 
+    public bool RemembersConversation { get; set; } = true;
+
     public Task<string> SendAsync(string message, CancellationToken cancellationToken = default)
     {
         Received.Add(message);

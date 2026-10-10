@@ -105,7 +105,7 @@ public class MessageRouterTests
         Assert.Equal(SenderType.System, result.Reply!.SenderType);
         Assert.Contains("@gemini", result.Reply.Content);
         Assert.Contains("@claude", result.Reply.Content);
-        Assert.Null(result.Message.TargetId);
+        Assert.Equal("gemini", result.Message.TargetId);
     }
 
     [Fact]

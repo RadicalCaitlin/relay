@@ -32,7 +32,8 @@ Key types:
   (send a message, lifecycle state), `AgentDiscoveryService`, `AgentException` (a failure whose
   message is safe to show the user).
 - `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`.
-- `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `MessageRouter`.
+- `Relay.Core.Routing`: `Mention` (parses a leading `@target`), `MessageRouter`, `SharedContext`
+  (builds what an agent is sent: the room messages it has missed, then the user's message).
 - `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
@@ -40,6 +41,10 @@ Key types:
 Message flow: `StartCommand` reads a line, `MessageRouter` records it in the room, and if it
 starts with `@id` the router calls that participant's `IAgentSession`. The reply, or a system
 notice explaining the failure, is recorded in the room and returned for display.
+
+Shared context: before calling the agent, the router asks the room what that agent has not seen
+and `SharedContext` puts it in front of the message as a labelled transcript. The decisions behind
+this are in `docs/adr/0001-shared-room-context.md`; read it before changing what agents are shown.
 
 ## Commands
 
@@ -141,6 +146,14 @@ and update it in the same change.
 - Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
 - A security fix needs a regression test that fails without it. Check that by removing the fix.
 - Agents never trigger other agents. Only human messages are routed.
+- Everything an agent is sent goes through `SharedContext.Compose`. Any text that did not come from
+  the user's current message must sit inside the transcript, escaped, with its author named. Never
+  place another participant's words where they could read as the user's or as Relay's.
+- What an agent has seen is tracked by its `ChatRoom`, and an agent belongs to one room. Do not
+  share a session, or anything derived from one room's messages, with another room.
+- A provider's session must report `RemembersConversation` truthfully, and an `AgentException`
+  raised before the agent could have received anything must set `PromptMayHaveBeenRead = false`.
+  The router relies on both to decide what an agent has seen.
 
 ## Expectations for coding agents modifying Relay
 

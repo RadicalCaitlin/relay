@@ -78,8 +78,34 @@ considers the folder trusted. The chatroom header says this rather than implying
 - Relay cannot answer a permission prompt. Anything an agent would need approval for is declined
   by the agent CLI, so agents are limited to what your own configuration already allows.
 - `--setting-sources user` only narrows what Claude loads. It grants nothing.
-- Agents never trigger each other. Only text you type is routed, and `/commands` are only read
+- Agents never trigger each other. Only text you type starts a turn, and `/commands` are only read
   from your input. An agent reply containing `@codex ...` or `/reset` is displayed and nothing more.
+
+## Shared room context
+
+Everything said in a room is shown to each agent the next time you address it
+(see [adr/0001-shared-room-context.md](adr/0001-shared-room-context.md)). That makes one agent's
+output part of another agent's input, which is new: before, an agent only ever read what you typed.
+
+- **Attribution cannot be forged.** Each replayed message is one line naming its author, whether
+  the author is the human or an agent, and who it was addressed to. `&`, `<`, `>` and `"` in the
+  text are escaped and line breaks are encoded, so a message cannot close its element, open
+  another, or add a line of its own. An agent therefore cannot make its words appear to come from you.
+- **The end of the transcript cannot be imitated.** The block's closing line carries a random value
+  chosen for each prompt, and the agent is told that only the text after that exact line is your
+  message. Text inside the transcript can neither contain that line nor guess it.
+- **Names are reserved.** No agent can register as `you`, `relay`, `User`, `everyone`, or under
+  another agent's name.
+- **The transcript is marked as context, not instructions**, and your own message is placed after
+  it, outside the block.
+- **A mistyped address stays what it was.** A message to a name that is not in the room is shown to
+  agents as addressed to that name, not as a note to everyone.
+- **Relay's own notices are not replayed**, so error text from one CLI does not reach another agent.
+- **Rooms are isolated.** What an agent has seen is tracked per room, and an agent cannot take
+  part in two rooms, so nothing said in one room can reach an agent in another.
+- **The amount replayed is capped** at 20 messages and 16,000 characters of message text per turn,
+  measured after escaping. A message that was sent in two turns that did not complete is not sent
+  a third time, so repeated failures cannot keep growing an agent's conversation.
 
 ## Command-line and executable safety
 
@@ -150,6 +176,8 @@ See "Remaining risks" for the cases this does not cover.
 | **The trust prompt is not covered by an automated test.** It only appears in a real terminal. The remembered, session-only and non-interactive paths are tested end to end. | Open. |
 | **A forced kill of Relay** (`taskkill /F`, `kill -9`, a crash) leaves the agent running. | Open (#22). |
 | **Background processes started by an agent** outlive the turn and are not tracked. | Open (#20). |
+| **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it, and within what your configuration allows. |
+| **Nothing in a room is private from its agents**, including what you said to a different agent, and anything pasted into the room. | By design. Private messages are not implemented. |
 | **Display spoofing with plain text.** An agent can print lines that look like chat lines, such as `You: ...`, though not in the real prompt's colours. | Accepted for now. |
 | **Unbounded output.** A CLI that printed gigabytes would exhaust memory. | Accepted for now. |
 | **Dependencies.** NuGet packages are pinned to exact versions. GitHub Actions are pinned to major tags, not commit hashes. | Accepted for now. |

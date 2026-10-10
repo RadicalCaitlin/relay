@@ -60,7 +60,7 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
-            throw new AgentException($"Could not start '{name}': {ex.Message}", ex);
+            throw new AgentException($"Could not start '{name}': {ex.Message}", ex) { PromptMayHaveBeenRead = false };
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

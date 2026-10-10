@@ -66,15 +66,32 @@ Inside the chatroom:
 | ------------------- | --------------------------------------------------- |
 | `@claude <message>` | Send the message to Claude and show its reply       |
 | `@codex <message>`  | Send the message to Codex and show its reply        |
-| any other text      | Record the message in the room without sending it   |
+| any other text      | Record the message in the room; agents see it the next time you address them |
 | `/agents`           | Show discovered agents                              |
 | `/history`          | Replay the room's message history                   |
 | `/clear`            | Clear the display (history is kept)                 |
-| `/reset`            | Start a new conversation with every agent           |
-| `/reset <agent>`    | Start a new conversation with one agent             |
+| `/restart`          | Start a new conversation with every agent, showing each the room again |
+| `/restart <agent>`  | The same for one agent; use it when an agent's conversation is broken |
+| `/reset`            | Start a new conversation with every agent from a clean slate |
+| `/reset <agent>`    | The same for one agent: it is shown nothing said before the reset |
 | `/help`             | Show the command list                               |
 | `/exit`             | Leave the chatroom                                  |
 | `Ctrl+C`            | Cancel the request in flight; exit when idle        |
+
+### One shared conversation
+
+Everything said in a room, by you or by an agent, is shown to each agent the next time you address
+it. If you tell Codex something and then ask Claude about it, Claude has seen both your message and
+Codex's reply, each labelled with who said it.
+
+- Nothing in a room is private from its agents, including what you said to a different agent.
+- An agent only speaks when you address it. Agents never trigger each other.
+- Relay replays at most the 20 most recent messages an agent has missed, and tells it how many
+  older ones were left out.
+- `/restart <agent>` starts a new conversation with that agent and shows it the room again.
+  `/reset <agent>` also makes it forget everything said before the reset.
+
+See [docs/adr/0001-shared-room-context.md](docs/adr/0001-shared-room-context.md) for the design.
 
 ### Folder trust
 
@@ -104,8 +121,9 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 ## MVP limitations
 
 - One room (`general`), held in memory. Nothing is persisted between runs.
-- An agent sees only the messages addressed to it, not the rest of the room. Each agent keeps
-  its own conversation for the lifetime of the room, or until you `/reset` it.
+- There are no private messages: every agent in a room sees everything said in it.
+- Because agents now read each other's replies, one agent can influence another through the room.
+  See the threat model.
 - Replies arrive whole when the agent finishes; there is no streaming.
 
 - Agents cannot answer permission prompts through Relay. Tool use that would need approval is
@@ -117,7 +135,6 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 ## Near-term roadmap
 
-- Shared room context, so agents can see what others said
 - Controlled agent-to-agent collaboration with turn limits and loop prevention
 - Streaming replies and tool-activity display
 - Surfacing agent permission prompts to the human

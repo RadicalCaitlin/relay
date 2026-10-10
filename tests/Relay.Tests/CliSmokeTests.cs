@@ -158,13 +158,55 @@ public sealed class CliSmokeTests : IDisposable
     }
 
     [Fact]
+    public async Task Each_agent_is_shown_what_the_others_were_told_and_what_they_answered()
+    {
+        InstallBothAgents();
+
+        await _harness.ChatAsync(["start"], "@codex the codeword is banana", "a note for the room", "@claude what is the codeword?", "/exit");
+
+        var sent = _harness.StandardInput("claude");
+        Assert.Contains("""<message from="User" kind="human" to="Codex">@codex the codeword is banana</message>""", sent);
+        Assert.Contains("""<message from="Codex" kind="agent" to="User">hello from codex</message>""", sent);
+        Assert.Contains("""<message from="User" kind="human" to="everyone">a note for the room</message>""", sent);
+        Assert.EndsWith("what is the codeword?", sent.TrimEnd());
+        Assert.DoesNotContain("room-transcript", _harness.StandardInput("codex"));
+    }
+
+    [Fact]
+    public async Task Restarted_agent_starts_a_new_conversation_but_is_shown_the_room_again()
+    {
+        InstallBothAgents();
+
+        var output = await _harness.ChatAsync(["start"], "@claude the codeword is banana", "/restart claude", "@claude what is the codeword?", "/exit");
+
+        var turns = _harness.Invocations("claude");
+        Assert.Equal(2, turns.Count);
+        Assert.DoesNotContain("--resume", turns[1]);
+        var sent = _harness.StandardInput("claude");
+        Assert.Contains("""<message from="User" kind="human" to="Claude">@claude the codeword is banana</message>""", sent);
+        Assert.Contains("""<message from="Claude" kind="agent" to="User">hello from claude</message>""", sent);
+        AssertShown("will be shown the recent messages in this room again", output);
+    }
+
+    [Fact]
+    public async Task Reset_agent_is_not_shown_what_was_said_before_the_reset()
+    {
+        InstallBothAgents();
+
+        var output = await _harness.ChatAsync(["start"], "@codex the codeword is banana", "/reset claude", "@claude what is the codeword?", "/exit");
+
+        Assert.Equal("what is the codeword?", _harness.StandardInput("claude").Trim());
+        AssertShown("will not be shown anything said before now", output);
+    }
+
+    [Fact]
     public async Task Messages_that_address_nobody_or_an_unknown_agent_are_explained_and_sent_nowhere()
     {
         InstallBothAgents();
 
         var output = await _harness.ChatAsync(["start"], "hello everyone", "@gemini hi", "@claude", "/frobnicate", "/exit");
 
-        AssertShown("Recorded. Address an agent to get a reply", output);
+        AssertShown("Recorded. Agents will see it the next time you address them", output);
         AssertShown("No agent named @gemini in this room. Agents here: @claude, @codex.", output);
         AssertShown("Nothing to send. Try: @claude <message>", output);
         AssertShown("Unknown command /frobnicate. Type /help.", output);
@@ -197,7 +239,7 @@ public sealed class CliSmokeTests : IDisposable
         var output = await _harness.ChatAsync(["start"], "@claude hi", "hello again", "/exit");
 
         AssertShown("Claude failed: claude exited with code 3: fatal: could not reach the service", output);
-        AssertShown("/reset claude starts a new conversation", output);
+        AssertShown("/restart claude starts a new conversation with it and shows it the room again", output);
         AssertShown("Recorded.", output);
     }
 

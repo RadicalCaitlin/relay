@@ -18,11 +18,14 @@ public sealed partial class CliAgentSession(
 
     public AgentSessionState State => _state;
 
+    // Without an id to resume, every turn starts a new conversation in the CLI.
+    public bool RemembersConversation => _sessionId is not null;
+
     public async Task<string> SendAsync(string message, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_state == AgentSessionState.Closed, this);
         if (Interlocked.Exchange(ref _busy, 1) == 1)
-            throw new AgentException("The agent is still working on a previous message.");
+            throw new AgentException("The agent is still working on a previous message.") { PromptMayHaveBeenRead = false };
 
         try
         {

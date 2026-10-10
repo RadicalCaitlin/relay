@@ -154,10 +154,16 @@ internal sealed class StartCommand(
                     WriteHeader(room);
                     break;
                 case "/reset":
-                    Reset(room, target: null);
+                    Reset(room, target: null, keepRoom: false);
                     break;
                 case var command when command.StartsWith("/reset "):
-                    Reset(room, command["/reset ".Length..].Trim().TrimStart('@'));
+                    Reset(room, command["/reset ".Length..].Trim().TrimStart('@'), keepRoom: false);
+                    break;
+                case "/restart":
+                    Reset(room, target: null, keepRoom: true);
+                    break;
+                case var command when command.StartsWith("/restart "):
+                    Reset(room, command["/restart ".Length..].Trim().TrimStart('@'), keepRoom: true);
                     break;
                 // Only a bare /word is a mistyped command; "/etc/hosts looks wrong" is a message.
                 case ['/', .. var name] when name.All(char.IsAsciiLetter):
@@ -193,10 +199,10 @@ internal sealed class StartCommand(
             if (result.Reply is { } reply)
                 WriteMessage(room, reply);
             else
-                console.MarkupLine("[dim]Recorded. Address an agent to get a reply, e.g. @claude hello[/]");
+                console.MarkupLine("[dim]Recorded. Agents will see it the next time you address them, e.g. @claude hello[/]");
 
             if (recipient?.State == AgentSessionState.Faulted)
-                console.MarkupLine($"[dim]If this keeps happening, check that {Markup.Escape(recipient.DisplayName)} works when you run it on its own (for example, that you are signed in). /reset {Markup.Escape(recipient.Id)} starts a new conversation with it.[/]");
+                console.MarkupLine($"[dim]If this keeps happening, check that {Markup.Escape(recipient.DisplayName)} works when you run it on its own (for example, that you are signed in). /restart {Markup.Escape(recipient.Id)} starts a new conversation with it and shows it the room again.[/]");
         }
         finally
         {
@@ -205,22 +211,31 @@ internal sealed class StartCommand(
         }
     }
 
-    private void Reset(ChatRoom room, string? target)
+    // /reset is a clean slate; /restart drops the agent's own conversation but shows it the room again.
+    private void Reset(ChatRoom room, string? target, bool keepRoom)
     {
+        var command = keepRoom ? "/restart" : "/reset";
         List<AgentParticipant> targets = target is null
             ? [.. room.Participants.Where(p => p.Session is not null)]
             : room.FindParticipant(target) is { Session: not null } named ? [named] : [];
 
         if (targets.Count == 0)
         {
-            console.MarkupLine("[yellow]No connected agent to reset. Use /reset for all agents or /reset <agent> for one.[/]");
+            console.MarkupLine($"[yellow]No connected agent found. Use {command} for all agents or {command} <agent> for one.[/]");
             return;
         }
 
         foreach (var participant in targets)
         {
-            participant.Session!.Reset();
-            WriteMessage(room, room.AddMessage(ChatRoom.SystemId, SenderType.System, $"{participant.DisplayName} will start a new conversation with the next message."));
+            if (keepRoom)
+                room.RestartConversation(participant);
+            else
+                room.ResetConversation(participant);
+
+            var notice = keepRoom
+                ? $"{participant.DisplayName} will start a new conversation with the next message, and will be shown the recent messages in this room again."
+                : $"{participant.DisplayName} will start a new conversation with the next message, and will not be shown anything said before now.";
+            WriteMessage(room, room.AddMessage(ChatRoom.SystemId, SenderType.System, notice));
         }
     }
 
@@ -271,10 +286,12 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/agents[/]    Show discovered agents");
         console.MarkupLine("[bold]/history[/]   Replay the room's message history");
         console.MarkupLine("[bold]/clear[/]     Clear the display (history is kept)");
-        console.MarkupLine("[bold]/reset[/]     Start new agent conversations (/reset <agent> for one)");
+        console.MarkupLine("[bold]/restart[/]   Start new agent conversations, keeping what was said in the room (/restart <agent> for one)");
+        console.MarkupLine("[bold]/reset[/]     Start new agent conversations from a clean slate (/reset <agent> for one)");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)
             console.MarkupLine($"[bold]@{Markup.Escape(participant.Id)} <message>[/]  Send a message to {Markup.Escape(participant.DisplayName)}");
+        console.MarkupLine("[dim]Everything said in this room, by you or by an agent, is shown to each agent the next time you address it.[/]");
     }
 
     private void WriteMessage(ChatRoom room, ChatMessage message, bool includeHuman = false)
