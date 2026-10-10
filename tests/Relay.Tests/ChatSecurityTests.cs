@@ -58,7 +58,8 @@ public sealed class ChatSecurityTests : IDisposable
     public async Task Trust_command_is_remembered_by_later_sessions_until_it_is_removed()
     {
         Assert.Contains("Trusted:", await _harness.ChatAsync(["trust"]));
-        AssertShown(_harness.Directory, await _harness.ChatAsync(["trust", "--list"]));
+        // The folder name only: macOS reports the temp folder through a /private symlink.
+        AssertShown(Path.GetFileName(_harness.Directory), await _harness.ChatAsync(["trust", "--list"]));
 
         await _harness.ChatAsync(["start"], "@claude hi", "/exit");
         Assert.DoesNotContain("--setting-sources", InvocationArguments);

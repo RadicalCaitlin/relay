@@ -59,6 +59,10 @@ internal sealed class RelayHarness : IDisposable
         startInfo.Environment["RELAY_TEST_DIR"] = Directory;
         // Keep the developer's real trusted folders out of the tests, and the tests out of theirs.
         startInfo.Environment["RELAY_HOME"] = PathTo("relay-home");
+        // Spectre.Console turns colour escape codes on when it sees GitHub Actions, even with output
+        // redirected. The tests assert on plain text, and on the absence of escape codes from agents.
+        startInfo.Environment.Remove("GITHUB_ACTIONS");
+        startInfo.Environment["NO_COLOR"] = "1";
 
         _relay = Process.Start(startInfo)!;
         _relay.StandardInput.AutoFlush = true;
