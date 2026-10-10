@@ -4,4 +4,7 @@
     <Project Path="src/Relay.Cli/Relay.Cli.csproj" />
     <Project Path="src/Relay.Core/Relay.Core.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Relay.Tests/Relay.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -1,0 +1,247 @@
+using Relay.Agents.Claude;
+using Relay.Agents.Codex;
+using Relay.Agents.Processes;
+using Relay.Core.Agents;
+
+namespace Relay.Tests;
+
+public class CliAgentTests
+{
+    private const string ClaudeOk = """{"type":"result","is_error":false,"result":"pong","session_id":"ce6f4686-9f97-4a98-8fb4-3125a2b0e671"}""";
+
+    private const string CodexOk = """
+        {"type":"thread.started","thread_id":"01a12603-b1c3-7d00-bf0c-d5720f7caecd"}
+        {"type":"turn.started"}
+        {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"working on it"}}
+        {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"pong"}}
+        {"type":"turn.completed","usage":{"input_tokens":1}}
+        """;
+
+    private static ProcessResult Ok(string stdout) => new(0, stdout, string.Empty);
+
+    [Fact]
+    public async Task Discovery_reports_path_and_version_when_the_cli_is_on_path()
+    {
+        var runner = new FakeProcessRunner(_ => Ok("2.1.273 (Claude Code)\n"));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+
+        var result = await provider.DiscoverAsync(includeVersion: true);
+
+        Assert.True(result.IsInstalled);
+        Assert.Equal("/usr/bin/claude", result.ExecutablePath);
+        Assert.Equal("2.1.273 (Claude Code)", result.Version);
+        Assert.Equal(["--version"], Assert.Single(runner.Requests).Arguments);
+    }
+
+    [Fact]
+    public async Task Discovery_still_reports_installed_when_the_version_cannot_be_read()
+    {
+        var provider = new CodexProvider(new FakeLocator("/usr/bin/codex"), new FakeProcessRunner(_ => throw new AgentException("no")));
+
+        var result = await provider.DiscoverAsync(includeVersion: true);
+
+        Assert.True(result.IsInstalled);
+        Assert.Null(result.Version);
+    }
+
+    [Fact]
+    public async Task Discovery_does_not_launch_the_cli_unless_the_version_is_requested()
+    {
+        var runner = new FakeProcessRunner(_ => Ok("1.0"));
+
+        var result = await new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner).DiscoverAsync();
+
+        Assert.True(result.IsInstalled);
+        Assert.Null(result.Version);
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public async Task Discovery_reports_a_missing_cli_without_launching_anything()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(string.Empty));
+        var provider = new CodexProvider(new FakeLocator(null), runner);
+
+        var result = await provider.DiscoverAsync();
+
+        Assert.False(result.IsInstalled);
+        Assert.Null(result.ExecutablePath);
+        Assert.Contains("not found on PATH", result.Detail);
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public async Task Claude_session_sends_the_message_on_stdin_and_resumes_the_same_conversation()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+        runner.Requests.Clear();
+
+        Assert.Equal("pong", await session.SendAsync("first; rm -rf /"));
+        await session.SendAsync("second");
+
+        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[0].Arguments);
+        Assert.Equal("first; rm -rf /", runner.Requests[0].StandardInput);
+        Assert.Equal("/work", runner.Requests[0].WorkingDirectory);
+        Assert.Equal(["-p", "--output-format", "json", "--resume", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"], runner.Requests[1].Arguments);
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Codex_session_resumes_the_thread_it_started()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(CodexOk));
+        var provider = new CodexProvider(new FakeLocator("/usr/bin/codex"), runner);
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+        runner.Requests.Clear();
+
+        Assert.Equal("pong", await session.SendAsync("first"));
+        await session.SendAsync("second");
+
+        Assert.Equal(["exec", "--json", "-"], runner.Requests[0].Arguments);
+        Assert.Equal(["exec", "resume", "--json", "01a12603-b1c3-7d00-bf0c-d5720f7caecd", "-"], runner.Requests[1].Arguments);
+    }
+
+    [Theory]
+    [InlineData("x & calc.exe")]
+    [InlineData("--dangerously-skip-permissions")]
+    [InlineData("-c")]
+    public async Task Session_never_puts_an_unsafe_session_id_on_the_command_line(string sessionId)
+    {
+        var runner = new FakeProcessRunner(_ => Ok($$"""{"is_error":false,"result":"pong","session_id":"{{sessionId}}"}"""));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), "/work");
+
+        await session.SendAsync("first");
+        await session.SendAsync("second");
+
+        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[^1].Arguments);
+    }
+
+    [Fact]
+    public async Task Session_is_faulted_after_a_failure_and_recovers_on_the_next_success()
+    {
+        var fail = true;
+        var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "boom") : Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi"));
+        Assert.Equal(AgentSessionState.Faulted, session.State);
+
+        fail = false;
+        await session.SendAsync("hi");
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Session_keeps_its_conversation_after_a_failure_until_it_is_reset()
+    {
+        var fail = false;
+        var runner = new FakeProcessRunner(_ => fail ? new(1, string.Empty, "rate limited") : Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await session.SendAsync("first");
+
+        fail = true;
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("second"));
+        fail = false;
+        await session.SendAsync("third");
+        session.Reset();
+        await session.SendAsync("fourth");
+
+        Assert.Contains("--resume", runner.Requests[2].Arguments);
+        Assert.Equal(["-p", "--output-format", "json"], runner.Requests[3].Arguments);
+    }
+
+    [Fact]
+    public async Task Reset_clears_a_faulted_state()
+    {
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(1, string.Empty, "boom")));
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi"));
+
+        session.Reset();
+
+        Assert.Equal(AgentSessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task Session_rejects_use_after_dispose()
+    {
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));
+        var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), "/work");
+
+        await session.DisposeAsync();
+
+        Assert.Equal(AgentSessionState.Closed, session.State);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => session.SendAsync("hi"));
+    }
+
+    [Fact]
+    public void Claude_parser_reads_the_result_and_session_id()
+        => Assert.Equal(new("pong", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"), ClaudeOutputParser.Parse(Ok(ClaudeOk)));
+
+    [Fact]
+    public void Claude_parser_surfaces_the_cli_error_message()
+    {
+        var result = new ProcessResult(1, """{"is_error":true,"result":"Not logged in · Please run /login"}""", string.Empty);
+
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(result));
+
+        Assert.Equal("Not logged in · Please run /login", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("", "fatal: something broke", "claude exited with code 2: fatal: something broke")]
+    [InlineData("not json", "", "claude exited with code 2 and no output.")]
+    public void Claude_parser_describes_non_json_output_from_the_exit_code_and_stderr(string stdout, string stderr, string expected)
+    {
+        var ex = Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(new(2, stdout, stderr)));
+
+        Assert.Equal(expected, ex.Message);
+    }
+
+    [Fact]
+    public void Claude_parser_rejects_an_empty_result()
+        => Assert.Throws<AgentException>(() => ClaudeOutputParser.Parse(Ok("""{"is_error":false,"result":""}""")));
+
+    [Fact]
+    public void Codex_parser_returns_the_last_agent_message_and_thread_id()
+        => Assert.Equal(new("pong", "01a12603-b1c3-7d00-bf0c-d5720f7caecd"), CodexOutputParser.Parse(Ok(CodexOk)));
+
+    [Theory]
+    [InlineData("""{"type":"turn.failed","error":{"message":"usage limit reached"}}""")]
+    [InlineData("""{"type":"error","message":"usage limit reached"}""")]
+    public void Codex_parser_surfaces_error_events(string line)
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, line, string.Empty)));
+
+        Assert.Equal("usage limit reached", ex.Message);
+    }
+
+    [Fact]
+    public void Codex_parser_ignores_a_transient_error_in_a_turn_that_completes()
+    {
+        var stdout = CodexOk.Replace("""{"type":"turn.started"}""", """{"type":"error","message":"Reconnecting... 1/5"}""");
+
+        Assert.Equal(new("pong", "01a12603-b1c3-7d00-bf0c-d5720f7caecd"), CodexOutputParser.Parse(Ok(stdout)));
+    }
+
+    [Fact]
+    public void Codex_parser_reports_an_error_event_when_no_answer_follows()
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(Ok("""{"type":"error","message":"stream disconnected"}""")));
+
+        Assert.Equal("stream disconnected", ex.Message);
+    }
+
+    [Fact]
+    public void Codex_parser_falls_back_to_stderr_when_there_are_no_events()
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, "garbage\n", "Not inside a trusted directory")));
+
+        Assert.Equal("codex exited with code 1: Not inside a trusted directory", ex.Message);
+    }
+}
