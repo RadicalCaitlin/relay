@@ -20,11 +20,12 @@ public sealed class ChatSecurityTests : IDisposable
 
     private string InvocationArguments => File.ReadAllText(_harness.PathTo("args.txt"));
 
+    // xUnit truncates long strings in its own messages, so these print everything Relay wrote.
     private static void AssertShown(string expected, string output)
-        => Assert.Contains(RelayHarness.Squash(expected), RelayHarness.Squash(output));
+        => Assert.True(RelayHarness.Squash(output).Contains(RelayHarness.Squash(expected)), $"Expected \"{expected}\" in:\n{output}");
 
     private static void AssertNotShown(string unexpected, string output)
-        => Assert.DoesNotContain(RelayHarness.Squash(unexpected), RelayHarness.Squash(output));
+        => Assert.False(RelayHarness.Squash(output).Contains(RelayHarness.Squash(unexpected)), $"Did not expect \"{unexpected}\" in:\n{output}");
 
     private string TrustFile => Path.Combine(_harness.PathTo("relay-home"), "trusted-folders.json");
 
@@ -37,7 +38,7 @@ public sealed class ChatSecurityTests : IDisposable
     {
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        Assert.Contains("Claude: pong", output);
+        AssertShown("Claude: pong", output);
         Assert.Contains("--setting-sources user", InvocationArguments);
         AssertShown("(not trusted:", output);
     }
@@ -47,7 +48,7 @@ public sealed class ChatSecurityTests : IDisposable
     {
         var output = await _harness.ChatAsync(["start", "--trust-workspace"], "@claude hi", "/exit");
 
-        Assert.Contains("Claude: pong", output);
+        AssertShown("Claude: pong", output);
         Assert.DoesNotContain("--setting-sources", InvocationArguments);
         AssertShown("(trusted for this session)", output);
         Assert.False(File.Exists(TrustFile));
@@ -99,7 +100,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        Assert.Contains("Claude: safe[2J]0;pwnedtextend31m", output);
+        AssertShown("Claude: safe[2J]0;pwnedtextend31m", output);
         Assert.DoesNotContain('\u001b', output);
         Assert.DoesNotContain('\u0007', output);
         Assert.DoesNotContain('‮', output);
@@ -113,7 +114,7 @@ public sealed class ChatSecurityTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
 
-        Assert.Contains("Claude: [red]not markup[/] [link=https://example.com]x[/]", output);
+        AssertShown("Claude: [red]not markup[/] [link=https://example.com]x[/]", output);
     }
 
     [Fact]

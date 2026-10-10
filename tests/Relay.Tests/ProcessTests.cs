@@ -118,14 +118,25 @@ public class ProcessTests : IDisposable
     [Fact]
     public void Locator_ignores_relative_path_entries_so_the_working_directory_cannot_supply_the_agent()
     {
-        var file = Path.Combine(_directory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool");
-        File.WriteAllText(file, string.Empty);
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserExecute);
-        var relative = Path.GetRelativePath(Environment.CurrentDirectory, _directory);
+        // Under the current directory, so that a relative entry can reach it on any drive layout.
+        var relative = $"relay-locator-{Guid.NewGuid():N}";
+        var directory = Directory.CreateDirectory(Path.Combine(Environment.CurrentDirectory, relative)).FullName;
+        try
+        {
+            var file = Path.Combine(directory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool");
+            File.WriteAllText(file, string.Empty);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            File.Copy(file, Path.Combine(Environment.CurrentDirectory, Path.GetFileName(file)), overwrite: true);
 
-        Assert.Null(PathExecutableLocator.Find("relaytool", string.Join(Path.PathSeparator, ".", relative), ".EXE;.CMD"));
-        Assert.NotNull(PathExecutableLocator.Find("relaytool", _directory, ".EXE;.CMD"));
+            Assert.Null(PathExecutableLocator.Find("relaytool", string.Join(Path.PathSeparator, ".", relative), ".EXE;.CMD"));
+            Assert.NotNull(PathExecutableLocator.Find("relaytool", directory, ".EXE;.CMD"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+            File.Delete(Path.Combine(Environment.CurrentDirectory, OperatingSystem.IsWindows() ? "relaytool.cmd" : "relaytool"));
+        }
     }
 
     [Fact]
