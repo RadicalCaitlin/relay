@@ -35,7 +35,11 @@ internal static class Poll
         }
     }
 
-    private static string ReadShared(string path)
+    /// <summary>
+    /// Reads a file that another process may be writing at this moment. Returns an empty string when
+    /// the file is missing or briefly locked, so a caller that is polling simply tries again.
+    /// </summary>
+    public static string ReadShared(string path)
     {
         try
         {

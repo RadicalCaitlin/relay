@@ -148,7 +148,9 @@ internal sealed class StartCommand(
                         WriteMessage(room, message, includeHuman: true);
                     break;
                 case "/clear":
-                    console.Clear();
+                    // There is no screen to clear when output goes to a file or a pipe, and trying to throws.
+                    if (!Console.IsOutputRedirected)
+                        console.Clear();
                     WriteHeader(room);
                     break;
                 case "/reset":
