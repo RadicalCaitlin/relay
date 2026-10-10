@@ -29,6 +29,8 @@ app.Configure(config =>
 {
     config.SetApplicationName("relay");
     config.SetApplicationVersion(version);
+    // Reject options a command does not know, rather than silently ignoring a mistyped one.
+    config.UseStrictParsing();
     config.AddCommand<AgentsCommand>("agents").WithDescription("List agent providers and whether they are installed.");
     config.AddCommand<StartCommand>("start").WithDescription("Start an interactive chatroom.");
     config.AddCommand<TrustCommand>("trust").WithDescription("Trust the current folder, so agents load its own settings.");
