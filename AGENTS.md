@@ -69,7 +69,10 @@ The build must stay free of warnings and the tests must pass before a change is 
 - Test routing with fake sessions, and providers with `FakeProcessRunner` and `FakeLocator`
   (`tests/Relay.Tests/Fakes.cs`).
 - Test output parsers with captured sample output.
-- `ProcessRunner` tests may launch only tools guaranteed to exist (`dotnet`, `ping`, `sleep`).
+- `ProcessRunner` tests may launch only tools guaranteed to exist (`dotnet`, `ping`, `sleep`, `sh`,
+  and Windows PowerShell on Windows).
+- `ChatSignalTests` runs the built CLI against a fake `claude` script and sends it real signals.
+  It is marked `[UnixFact]` and is skipped on Windows, where signals cannot be sent to a process.
 
 ## Adding an agent provider
 
@@ -100,6 +103,8 @@ An agent that is not CLI-backed implements `IAgentProvider` and `IAgentSession` 
 - Never start a process through a shell (`UseShellExecute` stays `false`).
 - Resolve executables through `IExecutableLocator`. Never hardcode install paths.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.
+- When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
+  cancelled first, so no agent process outlives Relay. A forced kill of Relay cannot be handled.
 - Never log, print, or persist environment variables, tokens, or credentials. Never read an
   agent's credential files.
 - Treat agent output as untrusted: escape it before rendering and strip control characters.

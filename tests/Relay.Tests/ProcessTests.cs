@@ -48,6 +48,26 @@ public class ProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task Runner_kills_descendants_of_the_process_when_cancelled()
+    {
+        // A wrapper that starts the real work as a child, like the cmd/node/sh shims the agent CLIs install.
+        var pidFile = Path.Combine(_directory, "child.pid");
+        var wrapper = OperatingSystem.IsWindows()
+            ? new ProcessRequest("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+                $"$p = Start-Process ping -ArgumentList '-n 120 127.0.0.1' -PassThru -NoNewWindow; Set-Content -LiteralPath '{pidFile}' -Value $p.Id; $p.WaitForExit()"])
+            : new ProcessRequest("sh", ["-c", "sleep 120 & echo $! > \"$0\"; wait", pidFile]);
+        using var cts = new CancellationTokenSource();
+
+        var run = _runner.RunAsync(wrapper, cts.Token);
+        var child = await Poll.ForProcessIdAsync(pidFile);
+        Assert.True(Poll.IsRunning(child));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        await Poll.UntilAsync(() => !Poll.IsRunning(child), "the descendant process is gone", timeoutSeconds: 10);
+    }
+
+    [Fact]
     public async Task Runner_kills_the_process_and_reports_a_timeout()
     {
         var ex = await Assert.ThrowsAsync<AgentException>(

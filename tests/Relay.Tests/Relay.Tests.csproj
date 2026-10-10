@@ -21,6 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Relay.Core\Relay.Core.csproj" />
     <ProjectReference Include="..\..\src\Relay.Agents\Relay.Agents.csproj" />
+    <!-- Build order only: ChatSignalTests launches the built CLI as a separate process. -->
+    <ProjectReference Include="..\..\src\Relay.Cli\Relay.Cli.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
