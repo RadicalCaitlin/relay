@@ -71,6 +71,24 @@ public sealed class ActivityTests : IDisposable
     }
 
     [Fact]
+    public void Claude_parser_is_not_misled_by_a_line_after_the_result_that_is_not_part_of_the_stream()
+        => Assert.Equal(
+            new("Read it, but could not write out.txt.", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"),
+            ClaudeOutputParser.Parse(new(0, ClaudeStream + "\n{\"warning\":\"a newer version is available\"}\n", string.Empty)));
+
+    [Fact]
+    public void Claude_parser_reads_a_result_printed_on_its_own_over_several_lines()
+        => Assert.Equal(
+            new("pong", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"),
+            ClaudeOutputParser.Parse(new(0, """
+                {
+                  "is_error": false,
+                  "result": "pong",
+                  "session_id": "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"
+                }
+                """, string.Empty)));
+
+    [Fact]
     public void Claude_activity_is_what_it_said_each_tool_it_used_and_each_tool_it_was_refused()
         => Assert.Equal(
             [
@@ -97,6 +115,20 @@ public sealed class ActivityTests : IDisposable
                 Note("One command failed."),
             ],
             Lines(CodexStream).SelectMany(CodexOutputParser.ParseActivity));
+
+    [Theory]
+    [InlineData(@"bash -lc ""echo \""hi\""""", @"echo ""hi""")]
+    [InlineData(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -Command 'dotnet test'", "dotnet test")]
+    // Not a shell, so the program is part of what ran.
+    [InlineData(@"python -c ""import shutil; shutil.rmtree('build')""", @"python -c ""import shutil; shutil.rmtree('build')""")]
+    [InlineData(@"gcc -c ""a.c""", @"gcc -c ""a.c""")]
+    // The quoted part is not the whole of what the shell was given.
+    [InlineData("bash -lc 'echo a' && rm -rf 'x'", "bash -lc 'echo a' && rm -rf 'x'")]
+    [InlineData(@"bash -lc ""echo a"" && rm -rf ""x""", @"bash -lc ""echo a"" && rm -rf ""x""")]
+    public void Codex_command_is_shown_without_its_shell_only_when_the_shell_is_all_that_is_taken_away(string command, string shown)
+        => Assert.Equal(
+            [Action($"Running: {shown}")],
+            CodexOutputParser.ParseActivity($$$"""{"type":"item.started","item":{"type":"command_execution","command":{{{System.Text.Json.JsonSerializer.Serialize(command)}}}}}"""));
 
     [Theory]
     [InlineData("")]
@@ -129,6 +161,37 @@ public sealed class ActivityTests : IDisposable
         Assert.Equal(7, reported.Count);
         Assert.Equal(Note("Reading hello.txt."), reported[0]);
         Assert.Equal(Action("TodoWrite"), reported[^1]);
+    }
+
+    [Fact]
+    public async Task Session_reports_the_last_note_of_a_turn_that_failed_because_it_was_not_a_reply()
+    {
+        // The turn ran out of turns after Claude said what it was about to do: no reply follows.
+        var cutShort = string.Join('\n', Lines(ClaudeStream)[..4]) + "\n" + """{"type":"result","subtype":"error_max_turns","is_error":true}""";
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(0, cutShort, string.Empty)));
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
+        var reported = new List<AgentActivity>();
+
+        await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi", reported.Add));
+
+        Assert.Equal([Note("Reading hello.txt.")], reported);
+    }
+
+    [Fact]
+    public async Task Session_does_not_report_the_last_note_of_a_failed_turn_when_the_failure_says_the_same()
+    {
+        var stream = """
+            {"type":"assistant","message":{"content":[{"type":"text","text":"Not logged in"}]}}
+            {"type":"result","is_error":true,"result":"Not logged in"}
+            """;
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(1, stream, string.Empty)));
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
+        var reported = new List<AgentActivity>();
+
+        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("hi", reported.Add));
+
+        Assert.Equal("Not logged in", ex.Message);
+        Assert.Empty(reported);
     }
 
     [Fact]
@@ -188,6 +251,54 @@ public sealed class ActivityTests : IDisposable
         var result = await run;
         Assert.Equal(["first", "second"], lines);
         Assert.Equal(["first", "second"], Lines(result.StandardOutput));
+    }
+
+    [Fact]
+    public async Task Runner_reads_the_output_to_its_end_when_the_callback_throws_and_does_not_call_it_again()
+    {
+        // More output than a pipe holds, so a process whose output is no longer read never exits.
+        var request = OperatingSystem.IsWindows()
+            ? new ProcessRequest("powershell", ["-NoProfile", "-NonInteractive", "-Command", "1..20000 | ForEach-Object { 'line ' + $_ }"])
+            : new ProcessRequest("sh", ["-c", "i=1; while [ $i -le 20000 ]; do echo \"line $i\"; i=$((i+1)); done"]);
+        var calls = 0;
+
+        var result = await new ProcessRunner().RunAsync(request with
+        {
+            Timeout = TimeSpan.FromSeconds(60),
+            OnOutputLine = _ =>
+            {
+                calls++;
+                throw new IOException("The console is gone.");
+            },
+        });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("line 20000", Lines(result.StandardOutput)[^1]);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task Runner_does_not_hand_over_what_a_background_process_writes_after_the_run_has_ended()
+    {
+        var request = OperatingSystem.IsWindows()
+            ? new ProcessRequest("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+                "Write-Output first; Start-Process cmd -ArgumentList '/c ping -n 5 127.0.0.1 >nul & echo late' -NoNewWindow"])
+            : new ProcessRequest("sh", ["-c", "echo first; (sleep 4; echo late) &"]);
+        var lines = new List<string>();
+
+        var result = await new ProcessRunner().RunAsync(request with
+        {
+            OnOutputLine = line =>
+            {
+                lock (lines)
+                    lines.Add(line);
+            },
+        });
+        await Task.Delay(TimeSpan.FromSeconds(6));
+
+        Assert.Equal(["first"], Lines(result.StandardOutput));
+        lock (lines)
+            Assert.Equal(["first"], lines);
     }
 
     [Fact]
@@ -251,6 +362,39 @@ public sealed class ActivityTests : IDisposable
         // macOS reports the temp folder through a /private symlink, so there the path is not under
         // the folder Relay sees itself in, and is shown in full.
         RelayHarness.AssertShown(OperatingSystem.IsMacOS() ? "Thing.cs" : $"- Read: {Path.Combine("src", "Thing.cs")}", output);
+    }
+
+    [Fact]
+    public async Task Activity_shows_a_path_that_only_contains_the_working_folder_in_full()
+    {
+        // The working folder's path appears inside this one, but the file is somewhere else.
+        var file = ("backup" + Path.Combine(_harness.Directory, "Thing.cs")).Replace(@"\", @"\\");
+        _harness.InstallAgent("claude", $$$"""
+            {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"{{{file}}}"}}]}}
+            {{{RelayHarness.ClaudeReply("pong")}}}
+            """);
+
+        var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
+
+        RelayHarness.AssertNotShown("- Read: backupThing.cs", output);
+        RelayHarness.AssertShown($"{Path.GetFileName(_harness.Directory)}{Path.DirectorySeparatorChar}Thing.cs", output);
+    }
+
+    [Fact]
+    public async Task Activity_cut_short_does_not_end_in_half_a_character()
+    {
+        // U+1F600 is two chars in .NET, and they fall either side of where the line is cut.
+        _harness.InstallAgent("claude", $$$"""
+            {"type":"assistant","message":{"content":[{"type":"text","text":"{{{new string('x', 199)}}}😀 and more"}]}}
+            {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.txt"}}]}}
+            {{{RelayHarness.ClaudeReply("pong")}}}
+            """);
+
+        var output = await _harness.ChatAsync(["start"], "@claude hi", "/exit");
+
+        RelayHarness.AssertShown($"- {new string('x', 199)}...", output);
+        Assert.DoesNotContain('\ud83d', output);
+        Assert.DoesNotContain('�', output);
     }
 
     [Fact]

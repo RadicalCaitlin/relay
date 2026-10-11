@@ -9,8 +9,8 @@ internal static class CliJson
             ? value.GetString()
             : null;
 
-    /// <summary>Parses a line that should be one JSON object. The caller disposes the document when this returns true.</summary>
-    public static bool TryParseObject(string line, out JsonDocument document)
+    /// <summary>Parses text that should be one JSON object. The caller disposes the document when this returns true.</summary>
+    public static bool TryParseObject(ReadOnlyMemory<char> line, out JsonDocument document)
     {
         try
         {

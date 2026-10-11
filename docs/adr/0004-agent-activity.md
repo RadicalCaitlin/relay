@@ -42,7 +42,8 @@ sees another's.**
   that failed. Notes and actions are shown dim with `-`; problems in yellow with `!`.
 - **The reply is not activity.** The last thing an agent says in a turn is its reply. A session
   holds each note back until something follows it and drops the one still held at the end, so the
-  reply appears once, as the reply.
+  reply appears once, as the reply. A turn that fails has no reply, so the note still held is
+  shown: it is the last thing the agent said before it stopped.
 - **Display only.** Activity is not recorded in the room. It is not in `/history`, it is not in
   what any agent is sent, and it does not survive the turn. Only a reply can reach another agent,
   which keeps ADR 0001's rule intact: everything an agent is shown is a message in the room.
@@ -65,7 +66,9 @@ sees another's.**
   of every tool, such as the contents of files it read. The threat model records this.
 - What is shown is the agent's own account, shortened. It is a sign of life, not an audit trail.
 - The callback that receives activity runs on the thread reading the process's output, while the
-  command loop waits. Nothing else writes to the console during a turn.
+  command loop waits. Nothing else writes to the console during a turn. It is not called once the
+  turn has ended, whatever a process the agent left behind goes on to print, and if it fails the
+  rest of the turn is not shown: the output is still read, so the reply still arrives.
 - A parser sees every line as it is printed, including lines that are not for it, cut-off lines
   and output from versions Relay has not seen. It must ignore what it does not recognise.
 

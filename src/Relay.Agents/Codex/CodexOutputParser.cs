@@ -16,7 +16,7 @@ public static partial class CodexOutputParser
 
         foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (!TryParse(line, out var document))
+            if (!CliJson.TryParseObject(line.AsMemory(), out var document))
                 continue;
 
             using (document)
@@ -58,7 +58,7 @@ public static partial class CodexOutputParser
     /// <summary>What one event says Codex is doing: what it said, a command it started, or a command that failed.</summary>
     public static IEnumerable<AgentActivity> ParseActivity(string line)
     {
-        if (!CliJson.TryParseObject(line, out var document))
+        if (!CliJson.TryParseObject(line.AsMemory(), out var document))
             return [];
 
         using (document)
@@ -84,24 +84,15 @@ public static partial class CodexOutputParser
         => item.TryGetProperty("exit_code", out var code) && code.ValueKind == JsonValueKind.Number ? $" (exit code {code})" : string.Empty;
 
     // Codex reports the shell it wrapped the command in, such as pwsh.exe -Command '...' or bash -lc "...".
-    // What it ran is the part worth showing.
+    // What it ran is the part worth showing. Anything else is shown as it is: another program that
+    // takes -c, such as python, or a command that goes on after the quoted part.
     private static string WithoutShell(string command)
-        => ShellWrapper().Match(command) is { Success: true } match ? match.Groups["script"].Value : command;
+        => ShellWrapper().Match(command) is { Success: true } match ? match.Groups["script"].Value.Replace("\\\"", "\"") : command;
 
-    [GeneratedRegex("""^(?:"[^"]+"|\S+)\s+(?:-Command|-lc|-c)\s+(?<quote>['"])(?<script>.*)\k<quote>$""", RegexOptions.Singleline)]
+    private const string Shell = @"(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?";
+
+    [GeneratedRegex(
+        $"""^(?:"(?:[^"]*[\\/])?{Shell}"|(?:\S*[\\/])?{Shell})\s+(?:-Command|-lc|-c)\s+(?:'(?<script>[^']*)'|"(?<script>(?:[^"\\]|\\.)*)")$""",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex ShellWrapper();
-
-    private static bool TryParse(string line, out JsonDocument document)
-    {
-        try
-        {
-            document = JsonDocument.Parse(line);
-            return true;
-        }
-        catch (JsonException)
-        {
-            document = null!;
-            return false;
-        }
-    }
 }

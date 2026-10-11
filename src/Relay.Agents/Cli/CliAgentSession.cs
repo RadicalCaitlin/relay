@@ -10,7 +10,7 @@ public sealed partial class CliAgentSession(
     string workingDirectory,
     Func<string?, IReadOnlyList<string>> buildArguments,
     Func<ProcessResult, AgentReply> parseReply,
-    Func<string, IEnumerable<AgentActivity>>? parseActivity = null) : IAgentSession
+    Func<string, IEnumerable<AgentActivity>> parseActivity) : IAgentSession
 {
     private readonly CancellationTokenSource _disposal = new();
     private volatile AgentSessionState _state = AgentSessionState.Ready;
@@ -28,6 +28,7 @@ public sealed partial class CliAgentSession(
         if (Interlocked.Exchange(ref _busy, 1) == 1)
             throw new AgentException("The agent is still working on a previous message.") { PromptMayHaveBeenRead = false };
 
+        var activity = onActivity is null ? null : new ActivityReporter(parseActivity, onActivity);
         try
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposal.Token);
@@ -37,7 +38,7 @@ public sealed partial class CliAgentSession(
             {
                 StandardInput = message,
                 WorkingDirectory = workingDirectory,
-                OnOutputLine = onActivity is null || parseActivity is null ? null : ActivityReporter(parseActivity, onActivity),
+                OnOutputLine = activity is null ? null : activity.Read,
             };
             var reply = parseReply(await runner.RunAsync(request, linked.Token));
 
@@ -49,13 +50,15 @@ public sealed partial class CliAgentSession(
             Transition(AgentSessionState.Ready);
             return reply.Text;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            activity?.ReportHeld(ex);
             Transition(AgentSessionState.Ready);
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            activity?.ReportHeld(ex);
             Transition(AgentSessionState.Faulted);
             throw;
         }
@@ -86,20 +89,30 @@ public sealed partial class CliAgentSession(
 
     // The last thing an agent says in a turn is its reply, which the caller is given as the result.
     // So a note is held back until something follows it, and the one still held at the end is dropped.
-    private static Action<string> ActivityReporter(Func<string, IEnumerable<AgentActivity>> parse, Action<AgentActivity> report)
+    private sealed class ActivityReporter(Func<string, IEnumerable<AgentActivity>> parse, Action<AgentActivity> report)
     {
-        AgentActivity? held = null;
-        return line =>
+        private AgentActivity? _held;
+
+        public void Read(string line)
         {
             foreach (var activity in parse(line))
             {
-                if (held is not null)
-                    report(held);
-                held = activity.Kind == AgentActivityKind.Note ? activity : null;
-                if (held is null)
+                if (_held is not null)
+                    report(_held);
+                _held = activity.Kind == AgentActivityKind.Note ? activity : null;
+                if (_held is null)
                     report(activity);
             }
-        };
+        }
+
+        // A turn that failed has no reply, so the note still held is not one: it is the last thing
+        // the agent said before it stopped. Unless the failure says the same thing, it is shown.
+        public void ReportHeld(Exception failure)
+        {
+            if (_held is { } note && note.Text != failure.Message)
+                report(note);
+            _held = null;
+        }
     }
 
     private void Transition(AgentSessionState next)

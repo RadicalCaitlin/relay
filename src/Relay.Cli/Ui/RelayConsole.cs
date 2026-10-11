@@ -28,10 +28,34 @@ internal static class RelayConsole
     public static string ActivityLine(string text, string folder)
     {
         const int maxLength = 200;
-        var line = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-            .Replace(Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar, string.Empty, StringComparison.OrdinalIgnoreCase);
-        return SafeLine(line.Length > maxLength ? line[..maxLength] + "..." : line);
+        var line = WithoutFolder(string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)), folder);
+        if (line.Length <= maxLength)
+            return SafeLine(line);
+
+        // Half of a character written as a pair would be shown as a broken one.
+        var cut = char.IsHighSurrogate(line[maxLength - 1]) ? maxLength - 1 : maxLength;
+        return SafeLine(line[..cut] + "...");
     }
+
+    // Removes the folder only where a path starts with it. Inside a longer path the same text is
+    // some other folder: in /app, /usr/share/app/config.yml is not under the working folder.
+    private static string WithoutFolder(string line, string folder)
+    {
+        var prefix = Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        var at = 0;
+        while ((at = line.IndexOf(prefix, at, comparison)) >= 0)
+        {
+            if (at == 0 || !IsPathCharacter(line[at - 1]))
+                line = line.Remove(at, prefix.Length);
+            else
+                at++;
+        }
+
+        return line;
+    }
+
+    private static bool IsPathCharacter(char c) => char.IsLetterOrDigit(c) || c is '/' or '\\' or '.' or '-' or '_' or '~' or ':';
 
     private static bool IsUnsafe(char c) => char.IsControl(c) || IsBidiControl(c);
 

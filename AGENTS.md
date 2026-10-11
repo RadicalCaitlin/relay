@@ -60,7 +60,8 @@ about routing, limits or permissions. See `docs/adr/0003-agent-roles.md`.
 
 Activity: `ProcessRunner` hands each line of the CLI's output to the session as it is written.
 The provider's `ParseActivity` turns a line into `AgentActivity` items, the session holds back the
-last note of a turn because that is the reply, and the router passes the rest to
+last note of a turn because that is the reply (and reports it if the turn fails, when there is no
+reply), and the router passes the rest to
 `ExchangeEvents.Activity` for `StartCommand` to show. See `docs/adr/0004-agent-activity.md`.
 
 ## Commands

@@ -16,28 +16,7 @@ public static class ClaudeOutputParser
 
     public static AgentReply Parse(ProcessResult result)
     {
-        // The result is the last object that is either marked as one or not marked at all; every
-        // other line of the stream names its own type.
-        JsonDocument? document = null;
-        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (!CliJson.TryParseObject(line, out var candidate))
-                continue;
-            if (candidate.RootElement.GetStringOrNull("type") is null or "result")
-            {
-                document?.Dispose();
-                document = candidate;
-            }
-            else
-            {
-                candidate.Dispose();
-            }
-        }
-
-        if (document is null)
-            throw new AgentException($"claude {CliFailure.Describe(result)}");
-
-        using (document)
+        using (var document = FindResult(result.StandardOutput) ?? throw new AgentException($"claude {CliFailure.Describe(result)}"))
         {
             var root = document.RootElement;
             var text = root.GetStringOrNull("result");
@@ -59,10 +38,34 @@ public static class ClaudeOutputParser
         }
     }
 
+    // The result is the last line marked as one. Looking for it from the end means the rest of the
+    // stream, which holds the result of every tool Claude used, is not parsed again to find it.
+    private static JsonDocument? FindResult(string output)
+    {
+        var rest = output.AsMemory();
+        while (!rest.IsEmpty)
+        {
+            var start = rest.Span.LastIndexOf('\n') + 1;
+            var line = rest[start..].Trim();
+            rest = rest[..Math.Max(start - 1, 0)];
+            if (line.IsEmpty || !CliJson.TryParseObject(line, out var candidate))
+                continue;
+            if (candidate.RootElement.GetStringOrNull("type") == "result")
+                return candidate;
+            candidate.Dispose();
+        }
+
+        // Nothing is marked as the result: the output may be the result on its own, as
+        // --output-format json prints it, on one line or over several.
+        return CliJson.TryParseObject(output.AsMemory(), out var whole) ? whole : null;
+    }
+
     /// <summary>What one line of the stream says Claude is doing: what it said, a tool it used, or a tool it was refused.</summary>
     public static IEnumerable<AgentActivity> ParseActivity(string line)
     {
-        if (!CliJson.TryParseObject(line, out var document))
+        // What a tool returned can be a whole file, and none of it is activity. This runs on the
+        // thread reading Claude's output, so such a line is passed over without being parsed.
+        if (line.StartsWith("""{"type":"user",""", StringComparison.Ordinal) || !CliJson.TryParseObject(line.AsMemory(), out var document))
             return [];
 
         using (document)
