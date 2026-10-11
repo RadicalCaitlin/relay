@@ -58,8 +58,13 @@ on macOS), or under `RELAY_HOME` when that is set to an absolute path.
 - A missing or corrupt file means nothing is trusted.
 - A file that exists but cannot be read (locked by another program, access denied) is reported as
   an error. It is never treated as empty, because saving on top of that would wipe the list.
-- Changes hold the file exclusively while they read and write it, so two Relay processes cannot
+- Changes hold a lock beside the file while they read and save it, so two Relay processes cannot
   lose each other's change.
+- A change is written whole to a staging file and renamed over the list, so an interrupted save
+  leaves either the previous list or the new one, both complete, and never a truncated one that
+  would read as corrupt.
+- The new list takes over the permissions of the one it replaces, so a list the user restricted
+  stays restricted. A list that is a symbolic link stays one: the file it points at is replaced.
 - A relative `RELAY_HOME` is ignored, so a folder cannot supply its own trust file. If no user
   configuration folder can be found at all, nothing is trusted and nothing can be remembered.
 

@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Relay.Core.Workspaces;
 
 namespace Relay.Tests;
@@ -102,6 +104,140 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
         Store().Revoke(_folder);
 
         Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_that_cannot_be_staged_leaves_the_previous_list_in_place()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+        var before = File.ReadAllText(_file);
+
+        // A directory where the new list has to be staged, so the write fails after the old list was read.
+        Directory.CreateDirectory(_file + ".new");
+
+        Assert.True(Record.Exception(() => Store().Trust(_folder)) is IOException or UnauthorizedAccessException);
+        Assert.True(Record.Exception(() => Store().Revoke(other)) is IOException or UnauthorizedAccessException);
+
+        Assert.Equal(before, File.ReadAllText(_file));
+        Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_interrupted_before_the_rename_leaves_the_previous_list_in_place()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // What an update killed partway through its write leaves behind: the list itself is untouched.
+        File.WriteAllText(_file + ".new", """{"trustedFolders":["pa""");
+
+        Assert.Equal([other], Store().TrustedFolders);
+
+        Store().Trust(_folder);
+        Assert.Equal([other, _folder], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_cannot_overwrite_one_another_process_is_making()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // The lock another Relay holds for the length of its own update.
+        using (new FileStream(_file + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => Store().Trust(_folder));
+            Assert.ThrowsAny<IOException>(() => Store().Revoke(other));
+            Assert.Equal([other], Store().TrustedFolders);
+        }
+
+        Store().Trust(_folder);
+        Assert.Equal([other, _folder], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_finished_change_leaves_nothing_half_written_behind()
+    {
+        Store().Trust(_folder);
+        Store().Revoke(_folder);
+
+        Assert.Empty(Directory.GetFileSystemEntries(Path.GetDirectoryName(_file)!, "*.new"));
+    }
+
+    [WindowsFact]
+    public void A_change_that_fails_at_the_rename_leaves_no_staging_file_behind()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // Another program reading the list without allowing it to be replaced: the read succeeds, the rename cannot.
+        using (new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            Assert.True(Record.Exception(() => Store().Trust(_folder)) is IOException or UnauthorizedAccessException);
+
+        Assert.Empty(Directory.GetFileSystemEntries(Path.GetDirectoryName(_file)!, "*.new"));
+        Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public async Task A_change_goes_through_while_another_Relay_is_reading_the_list()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // Open the way the store reads it, and for about as long.
+        var reader = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var released = Task.Delay(30).ContinueWith(_ => reader.Dispose());
+
+        Assert.True(Store().Revoke(other));
+
+        await released;
+        Assert.Empty(Store().TrustedFolders);
+    }
+
+    [SymbolicLinkFact]
+    public void A_list_that_is_a_link_stays_a_link_and_the_file_it_points_at_is_updated()
+    {
+        var kept = Path.Combine(Directory.CreateDirectory(Path.Combine(_directory, "dotfiles")).FullName, "trusted-folders.json");
+        File.WriteAllText(kept, "{}");
+        Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
+        File.CreateSymbolicLink(_file, kept);
+
+        Store().Trust(_folder);
+
+        Assert.Equal(kept, new FileInfo(_file).LinkTarget);
+        Assert.Contains("repo", File.ReadAllText(kept));
+        Assert.Equal([_folder], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_keeps_the_permissions_the_user_set_on_the_list()
+    {
+        Store().Trust(_folder);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var restricted = new FileSecurity();
+            restricted.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            restricted.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl, AccessControlType.Allow));
+            new FileInfo(_file).SetAccessControl(restricted);
+            var before = Access();
+
+            Store().Revoke(_folder);
+
+            Assert.Equal(before, Access());
+            Assert.StartsWith("D:P", before);
+
+            string Access() => new FileInfo(_file).GetAccessControl(AccessControlSections.Access).GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+        }
+        else
+        {
+            File.SetUnixFileMode(_file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            Store().Revoke(_folder);
+
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(_file));
+        }
     }
 
     [Fact]
