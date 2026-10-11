@@ -66,11 +66,33 @@ on macOS), or under `RELAY_HOME` when that is set to an absolute path.
 The cost of the default is that Claude does not see the project's `CLAUDE.md` in an untrusted folder.
 
 **Relay's folder trust governs Claude only.** Codex is left to its own checks, which stay active in
-`codex exec`: it refuses to run outside a trusted directory or Git repository, and its `--help`
-states that hooks need persisted trust. Relay passes none of the flags that turn those off, but it
-also has no documented flag to make Codex ignore a folder. So in a folder Relay calls untrusted,
-Codex still reads that folder's `AGENTS.md`, and loads its project configuration if Codex itself
-considers the folder trusted. The chatroom header says this rather than implying otherwise.
+`codex exec`, and Relay passes none of the flags that turn them off. Codex has no documented flag
+to make it ignore a folder, so what it loads depends on whether *Codex* has been told to trust the
+folder, in its own configuration, and not on what you told Relay. Verified behaviour of
+`codex exec --json -`, the arguments Relay uses, in a Git repository planted with each kind of content:
+
+| Folder content | Folder never trusted in Codex | Folder trusted in Codex |
+| --- | --- | --- |
+| MCP server in `.codex/config.toml` | Not started | **Server process starts** |
+| Hooks in `.codex/config.toml` and `.codex/hooks.json` | Do not run | Do not run until you have reviewed them in Codex |
+| `AGENTS.md` | Shown to the model | Shown to the model |
+| Skills in `.codex/skills` and `.agents/skills` | Listed to the model | Listed to the model |
+| Rules in `.codex/rules` | Not tested. Documented by Codex as not loaded | Not tested |
+
+- In a folder Codex has never been told to trust, nothing in the folder ran a command.
+- Trusting a parent folder in Codex does not trust a repository inside it.
+- Running Codex through Relay does not make Codex trust the folder.
+- A folder you have trusted in Codex starts its MCP servers when you address `@codex`, even while
+  Relay shows the folder as not trusted. The chatroom header says Codex applies its own checks
+  rather than implying otherwise.
+- Instructions still reach the model from a folder nobody trusted: its `AGENTS.md`, and the names
+  and descriptions of its skills. That is text, not a command, but it can steer the agent.
+
+The evidence is `CodexFolderTrustLiveTests`, which runs the installed Codex against such a folder
+with a throwaway Codex home and no account (`RELAY_LIVE_CODEX=1 dotnet test`). Its limits: the
+hooks tested are the ones for the start of a session and of a turn, because the tests reach no
+model, so hooks for later events and the rules that decide which commands need approval were not
+exercised. Codex documents both as loaded only from a trusted folder.
 
 ## Permission and approval boundaries
 
@@ -221,7 +243,8 @@ See "Remaining risks" for the cases this does not cover.
 | --- | --- |
 | **A trusted folder can run commands.** Trusting a folder lets its hooks and MCP servers execute, the same as trusting it in Claude Code. | By design. Only trust folders you would run code from. |
 | **Agents act with your permissions.** Whatever your agent configuration allows without a prompt, an agent can do in the working directory, including in an untrusted folder. Prompt injection from file contents can steer it. | Inherent to coding agents. Keep permissive allow-rules out of your user-level settings. |
-| **Relay does not enforce folder trust for Codex.** It relies on Codex's own trusted-directory and hook-trust checks, confirmed from its help text and its refusal to run outside a Git repository, but not tested with a hostile project configuration. Codex reads an untrusted folder's `AGENTS.md`. | Open. |
+| **Relay does not enforce folder trust for Codex.** It relies on Codex's own checks. Tested against a hostile folder: nothing in it ran a command unless the folder had been trusted in Codex itself, in which case its MCP servers start whatever Relay shows. Codex's rules files and the hooks for events after a turn starts were not tested. | Accepted. See "Workspace trust". Run the live tests again when Codex is upgraded. |
+| **Codex shows the model an untrusted folder's `AGENTS.md` and skills.** A hostile repository can use them to steer Codex, within what your own Codex configuration lets it do without approval. | Inherent to Codex; Relay has no documented way to turn it off. |
 | **The trust list is an ordinary file in your profile.** Anything running as you, including an agent whose configuration allows it to write there, could add a folder to it. | Accepted for now; the same is true of the agents' own trust records. |
 | **The trust prompt is not covered by an automated test.** It only appears in a real terminal. The remembered, session-only and non-interactive paths are tested end to end. | Open. |
 | **A forced kill of Relay** (`taskkill /F`, `kill -9`, a crash) leaves the agent running. | Open (#22). |

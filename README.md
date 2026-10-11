@@ -170,6 +170,11 @@ The first time you run `relay start` in a folder it asks whether you trust the f
 is remembered, so you are asked once per folder; `relay trust --remove` undoes it. Trust only
 folders you would run code from. The chatroom header shows which mode is in effect.
 
+This setting governs Claude only. Codex applies its own trust checks: in a folder you have never
+trusted in Codex it runs none of the folder's hooks or MCP servers, but it does read the folder's
+`AGENTS.md` and skills. A folder you have trusted in Codex itself stays trusted there, whatever
+you told Relay.
+
 See [docs/threat-model.md](docs/threat-model.md) for the full security model and remaining risks.
 
 ## Agent support

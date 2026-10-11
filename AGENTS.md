@@ -104,6 +104,11 @@ The build must stay free of warnings and the tests must pass before a change is 
 - Assert on Relay's output with `RelayHarness.AssertShown`, which ignores line wrapping.
 - `ChatSignalTests` sends the CLI real signals.
   It is marked `[UnixFact]` and is skipped on Windows, where signals cannot be sent to a process.
+- `CodexFolderTrustLiveTests` is the one exception to the first rule: it runs the installed Codex
+  against a hostile folder, and is the evidence for what the threat model says about Codex. It is
+  marked `[LiveCodexFact]` and skipped unless `RELAY_LIVE_CODEX=1`. It gives Codex a throwaway
+  `CODEX_HOME`, no credentials and no reachable model, and plants only commands that write a marker
+  file. Keep all of that true, and run it when Codex is upgraded or its arguments change.
 
 ## Adding an agent provider
 
