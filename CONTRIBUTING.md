@@ -57,6 +57,10 @@ and say what you verified and what you could not.
   must pass.
 - Pull requests are squash-merged, so the title becomes the commit message on `main`.
 
+Changes are reviewed against [docs/review-checklist.md](docs/review-checklist.md). It is worth
+reading before you open a pull request, and it says what to expect from a review and how to
+answer one: every finding gets a reply, fixed or not fixed and why.
+
 ## Licence
 
 Relay is released under the [MIT License](LICENSE). By contributing you agree that your
