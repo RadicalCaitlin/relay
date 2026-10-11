@@ -65,6 +65,11 @@ sees another's.**
 - Relay now holds Claude's whole stream in memory until the turn ends, which includes the result
   of every tool, such as the contents of files it read. The threat model records this.
 - What is shown is the agent's own account, shortened. It is a sign of life, not an audit trail.
+- A note is taken for the reply only if nothing follows it. If an agent's last words were followed
+  by a step and the turn still ended with them as its reply, they would be shown twice: once as a
+  note, once as the reply. Neither CLI is expected to end a turn that way, and a note already
+  shown cannot be taken back; holding every note until the turn ends would stop the view being
+  live.
 - The callback that receives activity runs on the thread reading the process's output, while the
   command loop waits. Nothing else writes to the console during a turn. It is not called once the
   turn has ended, whatever a process the agent left behind goes on to print, and if it fails the
