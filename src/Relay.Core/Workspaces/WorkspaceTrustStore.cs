@@ -11,8 +11,8 @@ namespace Relay.Core.Workspaces;
 /// <remarks>
 /// A missing or corrupt file means nothing is trusted. A file that exists but cannot be read (locked,
 /// access denied) is an error, never "nothing trusted": acting on that would overwrite the list.
-/// A change is staged beside the file and renamed over it, so an interrupted write leaves the
-/// previous list in place rather than a truncated one that would read as corrupt.
+/// A change is staged beside the file and renamed over it, so an interrupted write leaves either
+/// the previous list or the new one, both complete, never a truncated one that would read as corrupt.
 /// </remarks>
 public sealed class WorkspaceTrustStore(string? filePath)
 {

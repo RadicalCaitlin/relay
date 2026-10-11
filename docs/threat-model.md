@@ -61,7 +61,8 @@ on macOS), or under `RELAY_HOME` when that is set to an absolute path.
 - Changes hold a lock beside the file while they read and save it, so two Relay processes cannot
   lose each other's change.
 - A change is written whole to a staging file and renamed over the list, so an interrupted save
-  leaves the previous list in place rather than a truncated one that would read as corrupt.
+  leaves either the previous list or the new one, both complete, and never a truncated one that
+  would read as corrupt.
 - A relative `RELAY_HOME` is ignored, so a folder cannot supply its own trust file. If no user
   configuration folder can be found at all, nothing is trusted and nothing can be remembered.
 

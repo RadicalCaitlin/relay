@@ -105,7 +105,7 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
     }
 
     [Fact]
-    public void An_interrupted_change_leaves_the_previous_list_in_place()
+    public void A_change_that_cannot_be_staged_leaves_the_previous_list_in_place()
     {
         var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
         Store().Trust(other);
@@ -119,6 +119,40 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
 
         Assert.Equal(before, File.ReadAllText(_file));
         Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_interrupted_before_the_rename_leaves_the_previous_list_in_place()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // What an update killed partway through its write leaves behind: the list itself is untouched.
+        File.WriteAllText(_file + ".new", """{"trustedFolders":["pa""");
+
+        Assert.Equal([other], Store().TrustedFolders);
+
+        Store().Trust(_folder);
+        Assert.Equal([other, _folder], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_change_cannot_overwrite_one_another_process_is_making()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+
+        // The lock another Relay holds for the length of its own update.
+        var gate = new FileStream(_file + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        Assert.ThrowsAny<IOException>(() => Store().Trust(_folder));
+        Assert.ThrowsAny<IOException>(() => Store().Revoke(other));
+        Assert.Equal([other], Store().TrustedFolders);
+
+        gate.Dispose();
+
+        Store().Trust(_folder);
+        Assert.Equal([other, _folder], Store().TrustedFolders);
     }
 
     [Fact]
