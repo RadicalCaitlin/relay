@@ -31,6 +31,15 @@ public sealed class ChatRoom(Guid id, string name)
     private readonly Dictionary<AgentParticipant, HashSet<Guid>> _seen = [];
     private readonly Dictionary<AgentParticipant, Dictionary<Guid, int>> _sends = [];
 
+    private readonly Dictionary<AgentParticipant, AgentRole> _roles = [];
+
+    // Agents who have been sent their role, so their conversation may hold it.
+    private readonly HashSet<AgentParticipant> _roleStated = [];
+
+    // Agents whose role was removed after it was stated and who have not been told yet. Their
+    // conversation still holds the old instruction, so saying nothing would leave it in force.
+    private readonly HashSet<AgentParticipant> _roleWithdrawn = [];
+
     public Guid Id { get; } = id;
 
     public string Name { get; } = name;
@@ -123,6 +132,71 @@ public sealed class ChatRoom(Guid id, string name)
         }
     }
 
+    /// <summary>The role the user has given the agent in this room, if any.</summary>
+    public AgentRole? RoleOf(AgentParticipant participant)
+    {
+        lock (_gate)
+        {
+            RequireMember(participant);
+            return _roles.GetValueOrDefault(participant);
+        }
+    }
+
+    /// <param name="role">Null removes the agent's role.</param>
+    public void SetRole(AgentParticipant participant, AgentRole? role)
+    {
+        lock (_gate)
+        {
+            RequireMember(participant);
+            if (role is not null)
+            {
+                _roles[participant] = role;
+                _roleWithdrawn.Remove(participant);
+            }
+            else
+            {
+                // An agent that was never sent its role has nothing to be told about losing it.
+                _roles.Remove(participant);
+                if (_roleStated.Remove(participant))
+                    _roleWithdrawn.Add(participant);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records that the agent is being sent its role. It counts whether or not the turn completes:
+    /// the agent may have read it either way.
+    /// </summary>
+    public void MarkRoleStated(AgentParticipant participant)
+    {
+        lock (_gate)
+        {
+            RequireMember(participant);
+            if (_roles.ContainsKey(participant))
+                _roleStated.Add(participant);
+        }
+    }
+
+    /// <summary>Whether a role the agent was sent has been removed and it has not completed a turn since.</summary>
+    public bool RoleWithdrawn(AgentParticipant participant)
+    {
+        lock (_gate)
+        {
+            RequireMember(participant);
+            return _roleWithdrawn.Contains(participant);
+        }
+    }
+
+    /// <summary>Records that a completed turn told the agent its role was removed.</summary>
+    public void MarkRoleWithdrawalTold(AgentParticipant participant)
+    {
+        lock (_gate)
+        {
+            RequireMember(participant);
+            _roleWithdrawn.Remove(participant);
+        }
+    }
+
     /// <summary>
     /// A clean slate: the agent forgets its conversation and everything said in the room up to now.
     /// It sees only what is said from here on.
@@ -133,6 +207,8 @@ public sealed class ChatRoom(Guid id, string name)
         {
             SeenBy(participant).UnionWith(_messages.Select(m => m.Id));
             _sends[participant].Clear();
+            _roleStated.Remove(participant);
+            _roleWithdrawn.Remove(participant);
         }
 
         participant.Session?.Reset();
@@ -148,6 +224,8 @@ public sealed class ChatRoom(Guid id, string name)
         {
             SeenBy(participant).Clear();
             _sends[participant].Clear();
+            _roleStated.Remove(participant);
+            _roleWithdrawn.Remove(participant);
         }
 
         participant.Session?.Reset();

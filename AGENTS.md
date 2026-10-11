@@ -31,7 +31,8 @@ Key types:
 - `Relay.Core.Agents`: `IAgentProvider` (discovery plus session creation), `IAgentSession`
   (send a message, lifecycle state), `AgentDiscoveryService`, `AgentException` (a failure whose
   message is safe to show the user).
-- `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`.
+- `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`,
+  `AgentRole` (what the user has asked an agent to be; held by the room, per agent).
 - `Relay.Core.Routing`: `Mention` (parses a leading `@target`, and an agent's handover), `MessageRouter`
   (runs an exchange and reports why it stopped), `ExchangeLimits`, `SharedContext` (builds what an
   agent is sent: the room messages it has missed, then the user's message or another agent's handover).
@@ -52,6 +53,10 @@ Inside it the router delivers a reply whose first line is a mention of an invite
 `ExchangeLimits.MaxTurns` turns, and returns a `StopReason`. `StartCommand` shows each message as
 the router records it and, in pause mode, answers the router's question about each handover.
 Read `docs/adr/0002-agent-to-agent-exchanges.md` before changing who can start a turn.
+
+Roles: `/role` gives an agent an `AgentRole` for the session. `SharedContext` states it in Relay's
+introduction on every turn and names each agent's role in an exchange. A role changes nothing
+about routing, limits or permissions. See `docs/adr/0003-agent-roles.md`.
 
 ## Commands
 
@@ -161,6 +166,12 @@ and update it in the same change.
 - A handed-over message is sent with `SharedContext.ComposeHandover`: inside the transcript, under
   its author's name. Only Relay's own words follow the transcript on such a turn.
 - The user never edits an agent's message. At a pause they deliver it, stop, or write to its author.
+- Role text comes only from Relay's built-in list or from what the user types into `/role`. Never
+  take it from agent output or from a file in the working folder: it is sent to the agent in
+  Relay's voice on every turn.
+- A role is never described as, or used as, a limit on what an agent can do. Relay does not touch
+  an agent's permissions, so it must not suggest that it has.
+- No role description may name a provider. A test asserts this for the built-in ones.
 - Pause mode is set with `/pause on` and `/pause off`, never toggled. At a pause, a line that looks
   like a command or is addressed to another agent is asked again, never sent to an agent.
 - Read the console through `StartCommand.ReadLine`, which keeps a read that was interrupted. A

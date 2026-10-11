@@ -177,6 +177,13 @@ internal sealed class StartCommand(
                 case var command when command.StartsWith("/pause "):
                     console.MarkupLine($"[yellow]Pause mode is still {(_pause ? "on" : "off")}. Use /pause on or /pause off.[/]");
                     break;
+                case "/role":
+                    WriteRoles(room);
+                    break;
+                // From the line as typed: a description of the user's own keeps its capitals.
+                case var command when command.StartsWith("/role "):
+                    SetRole(room, input["/role ".Length..].Trim());
+                    break;
                 case "/restart":
                     Reset(room, target: null, keepRoom: true);
                     break;
@@ -320,6 +327,83 @@ internal sealed class StartCommand(
         }
     }
 
+    private void WriteRoles(ChatRoom room)
+    {
+        foreach (var participant in room.Participants)
+        {
+            var role = room.RoleOf(participant) is { } held ? $"{Markup.Escape(held.Name)}: {RelayConsole.Safe(held.Description)}" : "no role";
+            console.MarkupLine($"[bold]{Markup.Escape(participant.DisplayName)}[/]  {role}");
+        }
+
+        console.MarkupLine($"[dim]Roles: {string.Join(", ", AgentRole.BuiltIn.Select(r => r.Name))}. Set one with /role <agent> <role>, your own with /role <agent> <name>: <description>, and remove it with /role <agent> none.[/]");
+        console.MarkupLine("[dim]A role is what an agent is told to be. It does not limit what the agent can do.[/]");
+    }
+
+    // "<agent> <role>", "<agent> <name>: <description>" or "<agent> none".
+    private void SetRole(ChatRoom room, string arguments)
+    {
+        var parts = arguments.Split([' ', '\t'], 2, StringSplitOptions.TrimEntries);
+        if (room.FindParticipant(parts[0].TrimStart('@')) is not { } participant)
+        {
+            var known = string.Join(", ", room.Participants.Select(p => p.Id));
+            console.MarkupLine($"[yellow]No agent named {Markup.Escape(parts[0])} in this room. Agents here: {Markup.Escape(known.Length > 0 ? known : "none")}.[/]");
+            return;
+        }
+
+        var name = Markup.Escape(participant.DisplayName);
+        var id = Markup.Escape(participant.Id);
+        var spec = parts.Length > 1 ? parts[1] : string.Empty;
+        var builtIn = string.Join(", ", AgentRole.BuiltIn.Select(r => r.Name));
+        if (spec.Length == 0)
+        {
+            console.MarkupLine($"[yellow]Which role? /role {id} <role> with one of {builtIn}, or /role {id} <name>: <description> for your own.[/]");
+            return;
+        }
+
+        if (spec.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            if (room.RoleOf(participant) is null)
+            {
+                console.MarkupLine($"[dim]{name} has no role.[/]");
+                return;
+            }
+
+            room.SetRole(participant, null);
+            var told = room.RoleWithdrawn(participant) ? ", and will be told so with the next message" : string.Empty;
+            WriteMessage(room, room.AddMessage(ChatRoom.SystemId, SenderType.System, $"{participant.DisplayName} no longer has a role{told}."));
+            return;
+        }
+
+        AgentRole? role;
+        var replaces = string.Empty;
+        if (spec.Split(':', 2, StringSplitOptions.TrimEntries) is [var custom, var description])
+        {
+            if (!AgentRole.TryCreate(custom, description, out role, out var error))
+            {
+                console.MarkupLine($"[yellow]{Markup.Escape(error)} {name}'s role is unchanged.[/]");
+                return;
+            }
+
+            // In an exchange a role is listed beside the agent's @id, where an agent's name would read as an address.
+            if (room.FindParticipant(role.Name) is not null)
+            {
+                console.MarkupLine($"[yellow]{role.Name} is the name of an agent in this room, so it cannot be the name of a role. {name}'s role is unchanged.[/]");
+                return;
+            }
+
+            if (AgentRole.FindBuiltIn(role.Name) is not null)
+                replaces = $" This replaces the built-in description of {role.Name} for {participant.DisplayName} only.";
+        }
+        else if ((role = AgentRole.FindBuiltIn(spec)) is null)
+        {
+            console.MarkupLine($"[yellow]No role named {Markup.Escape(spec)}. Use one of {builtIn}, or give your own a description: /role {id} <name>: <description>. {name}'s role is unchanged.[/]");
+            return;
+        }
+
+        room.SetRole(participant, role);
+        WriteMessage(room, room.AddMessage(ChatRoom.SystemId, SenderType.System, $"{participant.DisplayName} now has the role of {role.Name}: {role.Sentence}{replaces} A role is what an agent is told to be; it does not limit what the agent can do."));
+    }
+
     // /reset is a clean slate; /restart drops the agent's own conversation but shows it the room again.
     private void Reset(ChatRoom room, string? target, bool keepRoom)
     {
@@ -398,6 +482,7 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/restart[/]   Start new agent conversations, keeping what was said in the room (/restart <agent> for one)");
         console.MarkupLine("[bold]/reset[/]     Start new agent conversations from a clean slate (/reset <agent> for one)");
         console.MarkupLine($"[bold]/pause[/]     Ask before one agent's message is passed to another: /pause on or /pause off (now {(_pause ? "on" : "off")})");
+        console.MarkupLine("[bold]/role[/]      Show each agent's role; /role <agent> <role> gives one, /role <agent> <name>: <description> one of your own, /role <agent> none removes it");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)
             console.MarkupLine($"[bold]@{Markup.Escape(participant.Id)} <message>[/]  Send a message to {Markup.Escape(participant.DisplayName)}");

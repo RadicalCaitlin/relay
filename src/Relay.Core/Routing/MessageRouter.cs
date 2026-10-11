@@ -164,11 +164,13 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             // by SharedContext rather than left among the rest.
             var catchUp = room.UnseenBy(speaker);
             var earlier = catchUp.Messages.Where(m => m.Id != current.Id).ToList();
+            var roleWithdrawn = room.RoleWithdrawn(speaker);
             var note = inExchange ? new ExchangeNote([.. invited.Select(i => i.Agent)], turnLimit - turn) : null;
             var prompt = note is not null && current.SenderType == SenderType.Agent
                 ? SharedContext.ComposeHandover(room, speaker, earlier, catchUp.Withheld.Count, current, _budget, note)
                 : SharedContext.Compose(room, speaker, earlier, catchUp.Withheld.Count, userText, _budget, exchange: note);
 
+            room.MarkRoleStated(speaker);
             events?.TurnStarting?.Invoke(new(speaker, turn, turnLimit));
             string response;
             try
@@ -210,6 +212,8 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             // An agent that will not remember this turn is shown the room afresh every time instead.
             if (session.RemembersConversation)
                 room.MarkSeen(speaker, [.. catchUp.Messages, .. catchUp.Withheld, reply]);
+            if (roleWithdrawn)
+                room.MarkRoleWithdrawalTold(speaker);
 
             if (addressee is null)
                 return End(StopReason.RepliedToUser);

@@ -168,9 +168,17 @@ internal sealed class RelayHarness : IDisposable
     public async Task<(int ExitCode, string Output)> RunAsync(string[] arguments, params string[] lines)
     {
         var relay = Start(arguments);
-        foreach (var line in lines)
-            await relay.StandardInput.WriteLineAsync(line);
-        relay.StandardInput.Close();
+        try
+        {
+            foreach (var line in lines)
+                await relay.StandardInput.WriteLineAsync(line);
+            relay.StandardInput.Close();
+        }
+        catch (IOException)
+        {
+            // Relay has stopped reading: it left on an earlier line, which some tests intend, and
+            // the pipe closed before the rest was written. If it has not exited, the wait below fails.
+        }
 
         await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
         return (relay.ExitCode, Output);

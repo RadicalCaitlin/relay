@@ -117,6 +117,20 @@ that agent. This is the one way an agent's output starts a process.
   a command. You cannot edit an agent's message;
   what you type instead goes to its author as your own message. Pause mode is off by default.
 
+## Roles
+
+`/role` lets you tell an agent what to be in the room, such as `reviewer`
+(see [adr/0003-agent-roles.md](adr/0003-agent-roles.md)). Relay states the role to the agent in
+its own introduction on every turn.
+
+- **Role text is yours or Relay's.** It comes from the built-in list or from what you type into
+  `/role`, never from an agent's output and never from a file in the folder. An agent cannot set,
+  change or remove a role, its own or another's.
+- **A role of your own is bounded and escaped**: a name of letters, digits and hyphens, and a
+  description of at most 500 characters, escaped like any other text Relay places in a prompt.
+- **A role grants nothing and restricts nothing.** It does not change who can start a turn, the
+  turn limit, or any permission. See "Remaining risks".
+
 ## Shared room context
 
 Everything said in a room is shown to each agent the next time you address it
@@ -215,6 +229,7 @@ See "Remaining risks" for the cases this does not cover.
 | **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it or inside an exchange you opened, and within what your configuration allows. |
 | **Inside an exchange, you do not read a reply before the next agent acts on it.** A reply steered by something the first agent read reaches the second without your review, for up to 5 handovers per message. | By design when pause mode is off. Bounded by who you named, the turn limit and Ctrl+C. Use `/pause on` to approve each handover. |
 | **One message can cost up to 6 agent turns** when it names several agents. | By design. The limit is fixed for now (#13). |
+| **A role is not a restriction.** An agent told it is a reviewer can still change files if its own configuration allows it, and an agent may ignore its role. | By design. Relay never changes what an agent may do; limit that in the agent's own configuration. |
 | **You cannot type during a turn**, so between pauses the only way to interrupt an exchange is Ctrl+C. | Accepted for now. |
 | **A mistyped agent name after the first is sent as text.** `@claude @cdoex agree` goes to Claude alone, because a second `@word` that is not an agent is usually code (`@Override`). No exchange opens, so nothing is delivered that you did not ask for, but you get a narrower conversation than you meant. | Accepted. The waiting line shows a turn count only when an exchange is open. |
 | **An agent that writes a handover the wrong way is not understood.** Its reply comes to you and the exchange ends without a notice. | By design: the safe way to be wrong. |

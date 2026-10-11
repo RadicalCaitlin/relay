@@ -366,6 +366,92 @@ public sealed class CliSmokeTests : IDisposable
     }
 
     [Fact]
+    public async Task Role_given_to_an_agent_reaches_it_with_every_message_until_it_is_removed()
+    {
+        InstallBothAgents();
+
+        var relay = _harness.Start("start");
+        await relay.StandardInput.WriteLineAsync("/role claude reviewer");
+        await relay.StandardInput.WriteLineAsync("@claude look at this");
+        await Poll.UntilAsync(() => _harness.Invocations("claude").Count == 1 && Squash(_harness.Output).Contains(Squash("Claude: hello from claude")), "the first reply is shown");
+        var withRole = _harness.StandardInput("claude");
+
+        await relay.StandardInput.WriteLineAsync("/role @claude none");
+        await relay.StandardInput.WriteLineAsync("@claude and this");
+        await Poll.UntilAsync(() => _harness.Invocations("claude").Count == 2, "the second turn is sent");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Contains("The user has given you the role of reviewer in this room: You review what others propose or change.", withRole);
+        Assert.EndsWith("look at this", withRole.TrimEnd());
+        Assert.Contains("The user has withdrawn the role you were given earlier in this room.", _harness.StandardInput("claude"));
+        AssertShown("Claude now has the role of reviewer: You review what others propose or change.", _harness.Output);
+        AssertShown("A role is what an agent is told to be; it does not limit what the agent can do.", _harness.Output);
+        AssertShown("Claude no longer has a role, and will be told so with the next message.", _harness.Output);
+    }
+
+    [Fact]
+    public async Task Role_command_lists_roles_and_accepts_one_of_the_users_own()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var output = await _harness.ChatAsync(
+            ["start"],
+            "/role",
+            "/role codex Tester: You write a failing test before any fix",
+            "/role claude reviewer: Only comment on naming.",
+            "/role",
+            "/help",
+            "/exit");
+
+        AssertShown("Claude no role", output);
+        AssertShown("Roles: implementer, reviewer, architect, coordinator.", output);
+        AssertShown("Codex now has the role of tester: You write a failing test before any fix. A role is what an agent is told to be", output);
+        AssertShown("Claude now has the role of reviewer: Only comment on naming. This replaces the built-in description of reviewer for Claude only.", output);
+        AssertShown("Codex tester: You write a failing test before any fix", output);
+        AssertShown("Claude reviewer: Only comment on naming.", output);
+        AssertShown("/role <agent> <role> gives one", output);
+        AssertNotShown("Recorded.", output);
+    }
+
+    [Fact]
+    public async Task Role_command_that_cannot_be_carried_out_says_why_and_changes_nothing()
+    {
+        InstallBothAgents();
+        var tooLong = new string('x', 501);
+
+        var output = await _harness.ChatAsync(
+            ["start"],
+            "/role claude architect",
+            "/role gemini reviewer",
+            "/role claude",
+            "/role claude tester",
+            "/role claude qa lead: tests things",
+            "/role claude Codex: reviews things",
+            "/role codex implementer",
+            "/role codex none",
+            "/role claude tester:",
+            $"/role claude tester: {tooLong}",
+            "/role codex none",
+            "/role",
+            "@claude hi",
+            "/exit");
+
+        AssertShown("No agent named gemini in this room. Agents here: claude, codex.", output);
+        AssertShown("Which role? /role claude <role> with one of implementer, reviewer, architect, coordinator", output);
+        AssertShown("No role named tester. Use one of implementer, reviewer, architect, coordinator, or give your own a description: /role claude <name>: <description>. Claude's role is unchanged.", output);
+        AssertShown("A role name is letters, digits and hyphens only. Claude's role is unchanged.", output);
+        AssertShown("codex is the name of an agent in this room, so it cannot be the name of a role. Claude's role is unchanged.", output);
+        AssertShown("Codex no longer has a role.", output);
+        AssertNotShown("Codex no longer has a role, and will be told so", output);
+        AssertShown("A role needs a description after the colon. Claude's role is unchanged.", output);
+        AssertShown("A role description is at most 500 characters; this one is 501. Claude's role is unchanged.", output);
+        AssertShown("Codex has no role.", output);
+        AssertShown("Claude architect: You decide structure before code is written", output);
+        Assert.Contains("the role of architect in this room", _harness.StandardInput("claude"));
+    }
+
+    [Fact]
     public async Task Line_that_starts_with_a_command_word_is_never_recorded_as_a_message()
     {
         InstallBothAgents();

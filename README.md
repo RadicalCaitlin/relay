@@ -76,6 +76,10 @@ Inside the chatroom:
 | `/reset`            | Start a new conversation with every agent from a clean slate |
 | `/reset <agent>`    | The same for one agent: it is shown nothing said before the reset |
 | `/pause on`, `/pause off` | Pause mode: ask before one agent's message is passed to another. `/pause` alone shows which it is |
+| `/role`             | Show each agent's role and the roles available     |
+| `/role <agent> <role>` | Give an agent a role: `implementer`, `reviewer`, `architect` or `coordinator` |
+| `/role <agent> <name>: <description>` | Give an agent a role of your own       |
+| `/role <agent> none` | Remove an agent's role                            |
 | `/help`             | Show the command list                               |
 | `/exit`             | Leave the chatroom                                  |
 | `Ctrl+C`            | Cancel the request or exchange in flight; exit when idle |
@@ -128,6 +132,30 @@ Inside an exchange with pause mode off, you do not read a reply before the next 
 See [docs/adr/0002-agent-to-agent-exchanges.md](docs/adr/0002-agent-to-agent-exchanges.md) for the
 design and [docs/threat-model.md](docs/threat-model.md) for what that means.
 
+### Roles
+
+You can tell an agent what to be in the room, so you do not have to repeat it in every message:
+
+```
+You: /role claude implementer
+You: /role codex reviewer
+You: @claude @codex add retry to the uploader
+```
+
+- The built-in roles are `implementer`, `reviewer`, `architect` and `coordinator`. Any agent can
+  hold any of them; none is tied to Claude or Codex.
+- `/role codex tester: you write a failing test before any fix` gives a role of your own, with a
+  description of up to 500 characters.
+- Relay tells the agent its role on every turn, and in an exchange tells each agent the others'
+  roles. An agent with no role is sent your message exactly as before.
+- **A role is an instruction, not a restriction.** A reviewer can still edit files if its own
+  configuration lets it. Relay never changes what an agent is allowed to do.
+- Relay does not decide who speaks next. Roles inform the agents; the one speaking still chooses
+  whether to hand over.
+- Roles last for the session, including across `/restart` and `/reset`, and are gone when Relay exits.
+
+See [docs/adr/0003-agent-roles.md](docs/adr/0003-agent-roles.md) for the design.
+
 ### Folder trust
 
 Agents run in the folder you start Relay from, with whatever access your own agent configuration
@@ -172,7 +200,6 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 ## Near-term roadmap
 
-- Agent roles and collaboration strategies
 - Streaming replies and tool-activity display
 - Surfacing agent permission prompts to the human
 - Multiple rooms and persisted history

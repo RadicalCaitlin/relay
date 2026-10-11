@@ -58,7 +58,10 @@ public static class SharedContext
     /// <param name="withheld">How many further unseen messages are not being repeated; see <see cref="RoomCatchUp.Withheld"/>.</param>
     /// <param name="boundary">Names the transcript's opening and closing lines. Random unless a test supplies one.</param>
     /// <param name="exchange">Set when the user opened this turn's exchange to more than one agent.</param>
-    /// <returns><paramref name="body"/> unchanged when there is nothing to catch up on and no exchange to explain.</returns>
+    /// <returns>
+    /// <paramref name="body"/> unchanged when there is nothing to tell the agent first: nothing to catch
+    /// up on, no exchange to explain, and no role given or withdrawn.
+    /// </returns>
     public static string Compose(
         ChatRoom room,
         AgentParticipant recipient,
@@ -68,7 +71,7 @@ public static class SharedContext
         ContextBudget budget,
         string? boundary = null,
         ExchangeNote? exchange = null)
-        => unseen.Count == 0 && withheld == 0 && exchange is null
+        => unseen.Count == 0 && withheld == 0 && exchange is null && room.RoleOf(recipient) is null && !room.RoleWithdrawn(recipient)
             ? body
             : Build(room, recipient, unseen, withheld, handover: null, body, budget, boundary, exchange);
 
@@ -127,6 +130,13 @@ public static class SharedContext
         var prompt = new StringBuilder()
             .Append("You are ").Append(Escape(recipient.DisplayName)).Append(", one participant in a shared chat room named \"")
             .Append(Escape(room.Name)).Append("\" with a human user and other AI agents. ");
+
+        // Stated on every turn, so it does not depend on what the agent remembers.
+        if (room.RoleOf(recipient) is { } role)
+            prompt.Append("The user has given you the role of ").Append(Escape(role.Name)).Append(" in this room: ").Append(Escape(role.Sentence)).Append(' ');
+        else if (room.RoleWithdrawn(recipient))
+            prompt.Append("The user has withdrawn the role you were given earlier in this room. You have no particular role now. ");
+
         if (hasTranscript)
         {
             prompt
@@ -147,7 +157,7 @@ public static class SharedContext
         }
 
         if (exchange is not null)
-            prompt.Append(' ').Append(Describe(exchange, recipient));
+            prompt.Append(' ').Append(Describe(room, exchange, recipient));
         prompt.Append("\n\n");
 
         if (hasTranscript)
@@ -168,9 +178,12 @@ public static class SharedContext
     }
 
     // Relay's own words, so an agent learns the rules of an exchange from Relay and not from another agent.
-    private static string Describe(ExchangeNote exchange, AgentParticipant recipient)
+    private static string Describe(ChatRoom room, ExchangeNote exchange, AgentParticipant recipient)
     {
-        var agents = string.Join(", ", exchange.Participants.Select(p => $"{Escape(p.DisplayName)} (@{Escape(p.Id)})"));
+        var agents = string.Join(", ", exchange.Participants.Select(p =>
+            room.RoleOf(p) is { } role
+                ? $"{Escape(p.DisplayName)} (@{Escape(p.Id)}, {Escape(role.Name)})"
+                : $"{Escape(p.DisplayName)} (@{Escape(p.Id)})"));
         var other = exchange.Participants.First(p => p != recipient);
         var turns = exchange.TurnsLeft switch
         {
