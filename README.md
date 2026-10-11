@@ -212,7 +212,9 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 ## Contributing
 
-See [AGENTS.md](AGENTS.md) for architecture, conventions, and the rules for process execution.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a bug or propose a change, and
+[AGENTS.md](AGENTS.md) for architecture, conventions, and the rules for process execution.
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 To have Git refuse a commit that contains a secret, install
 [gitleaks](https://github.com/gitleaks/gitleaks#installing) and enable the hook once per clone:
@@ -222,6 +224,11 @@ git config core.hooksPath .githooks
 ```
 
 CI runs the same scan on the commits of every pull request.
+
+## Security
+
+To report a vulnerability, follow [SECURITY.md](SECURITY.md); please do not open a public issue.
+[docs/threat-model.md](docs/threat-model.md) describes what Relay protects against and what it does not.
 
 ## Licence
 

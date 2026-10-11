@@ -264,5 +264,5 @@ See "Remaining risks" for the cases this does not cover.
 
 ## Reporting a problem
 
-Until the project has a published security policy (#15), report a suspected vulnerability
-privately to the maintainer rather than in a public issue.
+Report a suspected vulnerability privately, as [SECURITY.md](../SECURITY.md) describes, and not
+in a public issue.
