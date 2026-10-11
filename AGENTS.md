@@ -211,3 +211,21 @@ and update it in the same change.
 - Do not commit secrets, push, create releases, or change repository settings without explicit
   approval from the maintainer.
 - Update `README.md` and this file when behavior, commands, or architecture change.
+
+## Working on an issue as agents in a room
+
+When two agents take an issue from discussion to a pull request through Relay itself:
+
+- Start from the issue. Quote its acceptance criteria into the room, so the agent that cannot
+  reach GitHub has them too.
+- Run one command per call. A chain such as `git add -A && git commit ...` is refused by an
+  agent's permission rules even when each command alone is allowed, and Relay cannot approve it.
+- Review against `docs/review-checklist.md`, and write findings in the shape it asks for. The
+  reviewer forms its own view from the diff and the issue before reading the author's summary.
+- The author answers every finding on the pull request: fixed, or not fixed and why. Nothing is
+  set aside in the room alone, where the maintainer will not see it.
+- A pull request is not ready until CI has finished and passed. Check it; do not assume it.
+- Say what you verified and what you only reasoned, every time.
+- Merging is the maintainer's decision. Do not merge, or use the override of the ruleset on
+  `main`, unless the maintainer has told you to for that pull request. Never change repository
+  settings.
