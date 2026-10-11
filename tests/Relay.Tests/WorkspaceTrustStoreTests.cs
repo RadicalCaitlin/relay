@@ -143,13 +143,12 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
         Store().Trust(other);
 
         // The lock another Relay holds for the length of its own update.
-        var gate = new FileStream(_file + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-
-        Assert.ThrowsAny<IOException>(() => Store().Trust(_folder));
-        Assert.ThrowsAny<IOException>(() => Store().Revoke(other));
-        Assert.Equal([other], Store().TrustedFolders);
-
-        gate.Dispose();
+        using (new FileStream(_file + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => Store().Trust(_folder));
+            Assert.ThrowsAny<IOException>(() => Store().Revoke(other));
+            Assert.Equal([other], Store().TrustedFolders);
+        }
 
         Store().Trust(_folder);
         Assert.Equal([other, _folder], Store().TrustedFolders);
