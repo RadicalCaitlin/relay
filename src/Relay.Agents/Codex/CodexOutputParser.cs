@@ -9,9 +9,10 @@ namespace Relay.Agents.Codex;
 /// <summary>Parses the JSONL event stream printed by <c>codex exec --json</c>.</summary>
 public static partial class CodexOutputParser
 {
-    // Codex names this flag when it refuses to run outside a Git repository. Relay never passes it,
-    // so the flag's name is the part of that refusal least likely to be reworded.
     private const string SkipCheckFlag = "--skip-git-repo-check";
+
+    // The whole clause, because another failure may mention the flag without being this refusal.
+    private const string RepositoryRefusal = $"{SkipCheckFlag} was not specified";
 
     public static AgentReply Parse(ProcessResult result)
     {
@@ -51,10 +52,12 @@ public static partial class CodexOutputParser
         // completes, so on its own it only explains a failure; it does not cause one.
         if (turnFailure is not null)
             throw new AgentException(turnFailure.Trim());
-        if (result.ExitCode != 0 && result.StandardError.Contains(SkipCheckFlag, StringComparison.Ordinal))
+        // Codex refuses before it starts a turn, so it has emitted no event and has read no prompt.
+        if (result.ExitCode != 0 && !sawEvent && result.StandardError.Contains(RepositoryRefusal, StringComparison.Ordinal))
             throw new AgentException(
                 $"codex only runs inside a Git repository, and this folder is not one. Start Relay from a repository, "
-                + $"or run 'git init' here, then ask again. Relay does not pass {SkipCheckFlag} for you.");
+                + $"or run 'git init' here, then ask again. Relay does not pass {SkipCheckFlag} for you.")
+            { PromptMayHaveBeenRead = false };
         if (result.ExitCode != 0 || !sawEvent)
             throw new AgentException(error?.Trim() ?? $"codex {CliFailure.Describe(result)}");
         if (string.IsNullOrWhiteSpace(text))
