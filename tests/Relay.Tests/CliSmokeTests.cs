@@ -510,6 +510,27 @@ public sealed class CliSmokeTests : IDisposable
     }
 
     [Fact]
+    public async Task Codex_outside_a_git_repository_says_what_to_do_and_is_usable_again_afterwards()
+    {
+        const string refusal = "Not inside a trusted directory and --skip-git-repo-check was not specified.\n";
+        _harness.InstallAgent("codex", stdout: "", stderr: refusal, exitCode: 1);
+        var relay = _harness.Start("start");
+        await relay.StandardInput.WriteLineAsync("@codex hi");
+        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("only runs inside a Git repository")), "the explanation is shown");
+
+        _harness.SetAgentOutput("codex", CodexReply("pong"));
+        await relay.StandardInput.WriteLineAsync("@codex hi again");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(0, relay.ExitCode);
+        AssertShown("Start Relay from a repository, or run 'git init' here", _harness.Output);
+        AssertShown("Relay does not pass --skip-git-repo-check for you", _harness.Output);
+        AssertNotShown("Not inside a trusted directory", _harness.Output);
+        AssertShown("Codex: pong", _harness.Output);
+    }
+
+    [Fact]
     public async Task Agent_that_prints_something_unexpected_is_reported_as_a_failure()
     {
         _harness.InstallAgent("claude", "this is not json\n");

@@ -410,4 +410,16 @@ public class CliAgentTests
 
         Assert.Equal("codex exited with code 1: Not inside a trusted directory", ex.Message);
     }
+
+    [Fact]
+    public void Codex_parser_explains_the_refusal_to_run_outside_a_git_repository()
+    {
+        var stderr = "Not inside a trusted directory and --skip-git-repo-check was not specified.";
+
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, string.Empty, stderr)));
+
+        Assert.StartsWith("codex only runs inside a Git repository, and this folder is not one.", ex.Message);
+        Assert.Contains("git init", ex.Message);
+        Assert.DoesNotContain("Not inside a trusted directory", ex.Message);
+    }
 }
