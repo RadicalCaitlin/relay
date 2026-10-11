@@ -82,10 +82,10 @@ public class CliAgentTests
         Assert.Equal("pong", await session.SendAsync("first; rm -rf /"));
         await session.SendAsync("second");
 
-        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[0].Arguments);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "user"], runner.Requests[0].Arguments);
         Assert.Equal("first; rm -rf /", runner.Requests[0].StandardInput);
         Assert.Equal("/work", runner.Requests[0].WorkingDirectory);
-        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user", "--resume", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"], runner.Requests[1].Arguments);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "user", "--resume", "ce6f4686-9f97-4a98-8fb4-3125a2b0e671"], runner.Requests[1].Arguments);
         Assert.Equal(AgentSessionState.Ready, session.State);
     }
 
@@ -97,8 +97,8 @@ public class CliAgentTests
         var untrusted = provider.BuildArguments(sessionId: null, new("/work"));
         var trusted = provider.BuildArguments(sessionId: null, new("/work", TrustWorkspace: true));
 
-        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], untrusted);
-        Assert.Equal(["-p", "--output-format", "json"], trusted);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "user"], untrusted);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose"], trusted);
     }
 
     [Theory]
@@ -148,7 +148,7 @@ public class CliAgentTests
         await session.SendAsync("first");
         await session.SendAsync("second");
 
-        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[^1].Arguments);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "user"], runner.Requests[^1].Arguments);
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public class CliAgentTests
         await session.SendAsync("fourth");
 
         Assert.Contains("--resume", runner.Requests[2].Arguments);
-        Assert.Equal(["-p", "--output-format", "json", "--setting-sources", "user"], runner.Requests[3].Arguments);
+        Assert.Equal(["-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "user"], runner.Requests[3].Arguments);
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public class CliAgentTests
         await first;
 
         using var cts = new CancellationTokenSource();
-        var second = session.SendAsync("two", cts.Token);
+        var second = session.SendAsync("two", cancellationToken: cts.Token);
         await runner.Started;
         Assert.Equal(AgentSessionState.Busy, session.State);
         cts.Cancel();
@@ -251,7 +251,7 @@ public class CliAgentTests
         await using var session = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner)
             .CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("one", new CancellationToken(canceled: true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SendAsync("one", cancellationToken: new CancellationToken(canceled: true)));
 
         Assert.Equal(AgentSessionState.Ready, session.State);
     }

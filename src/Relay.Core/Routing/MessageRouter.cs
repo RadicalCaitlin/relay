@@ -63,6 +63,12 @@ public sealed class ExchangeEvents
     /// <summary>Called just before a message is handed to an agent, so a caller can show that it is waiting.</summary>
     public Action<TurnStarting>? TurnStarting { get; init; }
 
+    /// <summary>
+    /// Called with what an agent does during its turn, as it happens and possibly from another
+    /// thread. It is for display only: activity is not recorded in the room or shown to any agent.
+    /// </summary>
+    public Action<AgentParticipant, AgentActivity>? Activity { get; init; }
+
     /// <summary>Called for each message recorded after the user's own, as it is recorded.</summary>
     public Action<ChatMessage>? Recorded { get; init; }
 
@@ -172,10 +178,12 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
 
             room.MarkRoleStated(speaker);
             events?.TurnStarting?.Invoke(new(speaker, turn, turnLimit));
+            var working = speaker;
+            Action<AgentActivity>? onActivity = events?.Activity is { } report ? activity => report(working, activity) : null;
             string response;
             try
             {
-                response = await session.SendAsync(prompt, cancellationToken);
+                response = await session.SendAsync(prompt, onActivity, cancellationToken);
             }
             catch (OperationCanceledException)
             {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Relay.Agents.Cli;
 using Relay.Agents.Processes;
 using Relay.Core.Agents;
@@ -6,7 +7,7 @@ using Relay.Core.Agents;
 namespace Relay.Agents.Codex;
 
 /// <summary>Parses the JSONL event stream printed by <c>codex exec --json</c>.</summary>
-public static class CodexOutputParser
+public static partial class CodexOutputParser
 {
     public static AgentReply Parse(ProcessResult result)
     {
@@ -15,7 +16,7 @@ public static class CodexOutputParser
 
         foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (!TryParse(line, out var document))
+            if (!CliJson.TryParseObject(line.AsMemory(), out var document))
                 continue;
 
             using (document)
@@ -54,17 +55,44 @@ public static class CodexOutputParser
         return new(text.Trim(), threadId);
     }
 
-    private static bool TryParse(string line, out JsonDocument document)
+    /// <summary>What one event says Codex is doing: what it said, a command it started, or a command that failed.</summary>
+    public static IEnumerable<AgentActivity> ParseActivity(string line)
     {
-        try
+        if (!CliJson.TryParseObject(line.AsMemory(), out var document))
+            return [];
+
+        using (document)
         {
-            document = JsonDocument.Parse(line);
-            return true;
-        }
-        catch (JsonException)
-        {
-            document = null!;
-            return false;
+            var root = document.RootElement;
+            if (!root.TryGetProperty("item", out var item))
+                return [];
+
+            return (root.GetStringOrNull("type"), item.GetStringOrNull("type")) switch
+            {
+                ("item.completed", "agent_message") when item.GetStringOrNull("text") is { } text && !string.IsNullOrWhiteSpace(text)
+                    => [new(AgentActivityKind.Note, text.Trim())],
+                ("item.started", "command_execution") when item.GetStringOrNull("command") is { } command
+                    => [new(AgentActivityKind.Action, $"Running: {WithoutShell(command)}")],
+                ("item.completed", "command_execution") when item.GetStringOrNull("status") == "failed" && item.GetStringOrNull("command") is { } command
+                    => [new(AgentActivityKind.Problem, $"Command failed{ExitCode(item)}: {WithoutShell(command)}")],
+                _ => [],
+            };
         }
     }
+
+    private static string ExitCode(JsonElement item)
+        => item.TryGetProperty("exit_code", out var code) && code.ValueKind == JsonValueKind.Number ? $" (exit code {code})" : string.Empty;
+
+    // Codex reports the shell it wrapped the command in, such as pwsh.exe -Command '...' or bash -lc "...".
+    // What it ran is the part worth showing. Anything else is shown as it is: another program that
+    // takes -c, such as python, or a command that goes on after the quoted part.
+    private static string WithoutShell(string command)
+        => ShellWrapper().Match(command) is { Success: true } match ? match.Groups["script"].Value.Replace("\\\"", "\"") : command;
+
+    private const string Shell = @"(?:bash|sh|zsh|pwsh|powershell)(?:\.exe)?";
+
+    [GeneratedRegex(
+        $"""^(?:"(?:[^"]*[\\/])?{Shell}"|(?:\S*[\\/])?{Shell})\s+(?:-Command|-lc|-c)\s+(?:'(?<script>[^']*)'|"(?<script>(?:[^"\\]|\\.)*)")$""",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex ShellWrapper();
 }

@@ -137,7 +137,7 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Codex: hello from codex", output);
         Assert.Contains("first question", _harness.StandardInput("claude"));
         Assert.Contains("second question", _harness.StandardInput("codex"));
-        Assert.Equal("-p --output-format json --setting-sources user", Assert.Single(_harness.Invocations("claude")));
+        Assert.Equal("-p --output-format stream-json --verbose --setting-sources user", Assert.Single(_harness.Invocations("claude")));
         Assert.Equal("exec --json -", Assert.Single(_harness.Invocations("codex")));
     }
 

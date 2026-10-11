@@ -222,6 +222,7 @@ internal sealed class StartCommand(
                         ? $"[dim]Waiting for {name}... (turn {starting.Turn} of {starting.TurnLimit}, Ctrl+C to stop the exchange)[/]"
                         : $"[dim]Waiting for {name}... (Ctrl+C to cancel)[/]");
                 },
+                Activity = (_, activity) => WriteActivity(activity),
                 Recorded = message => WriteMessage(room, message),
                 Pause = _pause ? (handover, addressee) => AskAboutHandover(room, handover, addressee, turn.Token) : null,
             };
@@ -489,6 +490,14 @@ internal sealed class StartCommand(
         if (room.Participants.Where(p => p.Session is not null).ToList() is [var first, var second, ..])
             console.MarkupLine($"[bold]@{Markup.Escape(first.Id)} @{Markup.Escape(second.Id)} <message>[/]  Send it to {Markup.Escape(first.DisplayName)}, and let the agents named pass messages to each other. Only the first one is asked; the others speak if they are addressed.");
         console.MarkupLine("[dim]Everything said in this room, by you or by an agent, is shown to each agent the next time you address it.[/]");
+    }
+
+    // What the agent is doing while Relay waits for its reply. Indented and dim, under the waiting
+    // line that names the agent, so it cannot pass for a message in the room.
+    private void WriteActivity(AgentActivity activity)
+    {
+        var text = RelayConsole.ActivityLine(activity.Text, Environment.CurrentDirectory);
+        console.MarkupLine(activity.Kind == AgentActivityKind.Problem ? $"[yellow]  ! {text}[/]" : $"[dim]  - {text}[/]");
     }
 
     private void WriteMessage(ChatRoom room, ChatMessage message, bool includeHuman = false)

@@ -5,9 +5,11 @@ using Relay.Core.Agents;
 namespace Relay.Agents.Claude;
 
 /// <summary>
-/// Claude Code via its documented print mode: <c>claude -p --output-format json</c>, prompt on stdin,
-/// <c>--resume &lt;session_id&gt;</c> to continue. No permission flags are passed, so Claude Code's own
-/// settings decide what it may do; anything that would need an interactive approval is denied.
+/// Claude Code via its documented print mode: <c>claude -p --output-format stream-json --verbose</c>,
+/// prompt on stdin, <c>--resume &lt;session_id&gt;</c> to continue. The stream reports each step as it
+/// happens and ends with the reply; print mode only offers it together with <c>--verbose</c>.
+/// No permission flags are passed, so Claude Code's own settings decide what it may do; anything
+/// that would need an interactive approval is denied.
 /// <para>
 /// Print mode skips Claude Code's workspace-trust dialog, so by default it would run hooks and MCP servers
 /// defined by the working directory. Unless the user trusts the workspace, only their own user-level
@@ -26,7 +28,7 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
 
     public override IReadOnlyList<string> BuildArguments(string? sessionId, AgentSessionOptions options)
     {
-        List<string> arguments = ["-p", "--output-format", "json"];
+        List<string> arguments = ["-p", "--output-format", "stream-json", "--verbose"];
         if (!options.TrustWorkspace)
             arguments.AddRange(["--setting-sources", "user"]);
         if (sessionId is not null)
@@ -35,4 +37,6 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
     }
 
     public override AgentReply ParseReply(ProcessResult result) => ClaudeOutputParser.Parse(result);
+
+    public override IEnumerable<AgentActivity> ParseActivity(string line) => ClaudeOutputParser.ParseActivity(line);
 }

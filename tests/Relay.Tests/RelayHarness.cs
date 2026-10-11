@@ -50,7 +50,7 @@ internal sealed class RelayHarness : IDisposable
     public static void AssertNotShown(string unexpected, string output)
         => Assert.False(Squash(output).Contains(Squash(unexpected)), $"Did not expect \"{unexpected}\" in:\n{output}");
 
-    /// <summary>What <c>claude -p --output-format json</c> prints for a successful turn.</summary>
+    /// <summary>The last line <c>claude -p --output-format stream-json</c> prints for a successful turn: the result.</summary>
     /// <param name="jsonEscapedText">Written with JSON escapes, so the file on disk stays plain ASCII.</param>
     public static string ClaudeReply(string jsonEscapedText)
         => $$"""{"type":"result","is_error":false,"result":"{{jsonEscapedText}}","session_id":"{{ClaudeSessionId}}"}""";

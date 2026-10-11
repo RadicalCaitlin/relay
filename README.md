@@ -156,6 +156,32 @@ You: @claude @codex add retry to the uploader
 
 See [docs/adr/0003-agent-roles.md](docs/adr/0003-agent-roles.md) for the design.
 
+### Watching an agent work
+
+A turn can take minutes. While Relay waits it shows what the agent is doing, as it happens:
+
+```
+You: @claude add retry to the uploader
+Waiting for Claude... (Ctrl+C to cancel)
+  - Looking at how uploads are sent today.
+  - Read: src/Uploader.cs
+  - Write: src/Retry.cs
+  ! Write was not allowed: Claude requested permissions to write to src/Retry.cs, but you haven't granted it yet.
+  - PowerShell: dotnet test
+Claude: I could not add src/Retry.cs: writing files needs your approval.
+```
+
+- A line starting with `-` is something the agent said along the way, or a step it took: a file it
+  read or changed, a command it ran.
+- A line starting with `!` is a step that was refused or that failed. Relay cannot approve it for
+  you; allow it in the agent's own configuration if you want it to work next time.
+- These lines are only for you. They are not part of the room: `/history` does not show them and
+  no other agent sees them.
+- Claude's own reasoning is not shown, because Claude Code does not make it available. Codex
+  reports what it says and the commands it runs.
+
+See [docs/adr/0004-agent-activity.md](docs/adr/0004-agent-activity.md) for the design.
+
 ### Folder trust
 
 Agents run in the folder you start Relay from, with whatever access your own agent configuration
@@ -181,7 +207,7 @@ See [docs/threat-model.md](docs/threat-model.md) for the full security model and
 
 | Agent        | Discovery | Chat | How Relay talks to it                                                  |
 | ------------ | --------- | ---- | ---------------------------------------------------------------------- |
-| Claude Code  | yes       | yes  | `claude -p --output-format json`, continued with `--resume <id>`       |
+| Claude Code  | yes       | yes  | `claude -p --output-format stream-json --verbose`, continued with `--resume <id>` |
 | OpenAI Codex | yes       | yes  | `codex exec --json -`, continued with `codex exec resume <id> --json -` |
 
 Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.0 on Windows.
@@ -192,11 +218,12 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 - There are no private messages: every agent in a room sees everything said in it.
 - Because agents now read each other's replies, one agent can influence another through the room.
   See the threat model.
-- Replies arrive whole when the agent finishes; there is no streaming.
-
+- A reply arrives whole when the agent finishes. While you wait, Relay shows what the agent is
+  doing (see "Watching an agent work"), but not the reply as it is written.
 - Agents cannot answer permission prompts through Relay. Tool use that would need approval is
   declined by the agent CLI, so agents are effectively limited to what their own configuration
-  already allows. Codex also refuses to run outside a Git repository.
+  already allows. Relay shows you when Claude is refused something; Codex does not report a
+  refusal as such. Codex also refuses to run outside a Git repository.
 - An agent's turn has no time limit. If an agent hangs, press `Ctrl+C` to cancel the request.
 - You cannot type while an agent is working, so an exchange can only be interrupted with `Ctrl+C`
   or, in pause mode, between turns.
@@ -205,8 +232,8 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 ## Near-term roadmap
 
-- Streaming replies and tool-activity display
-- Surfacing agent permission prompts to the human
+- Streaming the reply itself as it is written
+- Letting the human answer an agent's permission prompts
 - Multiple rooms and persisted history
 - Packaging as a .NET global tool and native executables
 

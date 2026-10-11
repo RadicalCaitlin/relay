@@ -12,6 +12,13 @@ public sealed record ProcessRequest(string FileName, IReadOnlyList<string> Argum
     public string? WorkingDirectory { get; init; }
 
     public TimeSpan? Timeout { get; init; }
+
+    /// <summary>
+    /// Called with each line of standard output as the process writes it, without its line ending,
+    /// from the thread that reads the output. The whole output is still returned at the end.
+    /// It is never called once the run has ended, and not again in a run in which it threw.
+    /// </summary>
+    public Action<string>? OnOutputLine { get; init; }
 }
 
 public sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
@@ -69,7 +76,8 @@ public sealed class ProcessRunner : IProcessRunner
 
         var output = new StringBuilder();
         var error = new StringBuilder();
-        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput, output), PumpAsync(process.StandardError, error));
+        var lines = request.OnOutputLine is { } onLine ? new OutputLines(onLine) : null;
+        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput, output, lines), PumpAsync(process.StandardError, error));
         try
         {
             await WriteInputAsync(process, request.StandardInput, timeout.Token);
@@ -96,10 +104,14 @@ public sealed class ProcessRunner : IProcessRunner
             // Whatever went wrong, never leave the CLI running behind us.
             if (!process.HasExited)
                 await KillAsync(process);
+
+            // A pump can outlive the run, reading from a descendant that kept the pipe open, and
+            // the caller has moved on: nothing it reads from here on is part of this run.
+            lines?.Stop();
         }
     }
 
-    private static async Task PumpAsync(StreamReader reader, StringBuilder sink)
+    private static async Task PumpAsync(StreamReader reader, StringBuilder sink, OutputLines? lines = null)
     {
         var buffer = new char[4096];
         try
@@ -109,11 +121,72 @@ public sealed class ProcessRunner : IProcessRunner
             {
                 lock (sink)
                     sink.Append(buffer, 0, read);
+                lines?.Append(buffer.AsSpan(0, read));
             }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             // The process was killed or disposed mid-read; what was captured so far is all there is.
+        }
+
+        lines?.End();
+    }
+
+    /// <summary>Splits output into lines as it arrives and hands each to the caller, until the run ends.</summary>
+    private sealed class OutputLines(Action<string> onLine)
+    {
+        private readonly Lock _gate = new();
+        private readonly StringBuilder _line = new();
+        private bool _stopped;
+
+        public void Append(ReadOnlySpan<char> text)
+        {
+            int end;
+            while ((end = text.IndexOf('\n')) >= 0)
+            {
+                _line.Append(text[..end]);
+                Report();
+                text = text[(end + 1)..];
+            }
+
+            _line.Append(text);
+        }
+
+        /// <summary>The output has ended, so what is left is a last line without a line ending.</summary>
+        public void End()
+        {
+            if (_line.Length > 0)
+                Report();
+        }
+
+        /// <summary>Returns once no call to the caller is in progress, and none will be made again.</summary>
+        public void Stop()
+        {
+            lock (_gate)
+                _stopped = true;
+        }
+
+        private void Report()
+        {
+            var line = _line.ToString().TrimEnd('\r');
+            _line.Clear();
+            lock (_gate)
+            {
+                if (_stopped)
+                    return;
+
+                try
+                {
+                    onLine(line);
+                }
+                catch (Exception)
+                {
+                    // The caller is being told about the output, and the output must be read to its
+                    // end whether or not it can listen: a process whose pipe is not read stops when the
+                    // pipe fills and never exits. So the caller is not told again, and the run goes on.
+                    _stopped = true;
+                }
+            }
         }
     }
 

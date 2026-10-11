@@ -30,7 +30,7 @@ Key types:
 
 - `Relay.Core.Agents`: `IAgentProvider` (discovery plus session creation), `IAgentSession`
   (send a message, lifecycle state), `AgentDiscoveryService`, `AgentException` (a failure whose
-  message is safe to show the user).
+  message is safe to show the user), `AgentActivity` (a step an agent reports while it works).
 - `Relay.Core.Rooms`: `ChatRoom`, `ChatMessage`, `SenderType`, `AgentParticipant`, `IRoomManager`,
   `AgentRole` (what the user has asked an agent to be; held by the room, per agent).
 - `Relay.Core.Routing`: `Mention` (parses a leading `@target`, and an agent's handover), `MessageRouter`
@@ -57,6 +57,12 @@ Read `docs/adr/0002-agent-to-agent-exchanges.md` before changing who can start a
 Roles: `/role` gives an agent an `AgentRole` for the session. `SharedContext` states it in Relay's
 introduction on every turn and names each agent's role in an exchange. A role changes nothing
 about routing, limits or permissions. See `docs/adr/0003-agent-roles.md`.
+
+Activity: `ProcessRunner` hands each line of the CLI's output to the session as it is written.
+The provider's `ParseActivity` turns a line into `AgentActivity` items, the session holds back the
+last note of a turn because that is the reply (and reports it if the turn fails, when there is no
+reply), and the router passes the rest to
+`ExchangeEvents.Activity` for `StartCommand` to show. See `docs/adr/0004-agent-activity.md`.
 
 ## Commands
 
@@ -117,7 +123,8 @@ The build must stay free of warnings and the tests must pass before a change is 
 2. Add a folder under `src/Relay.Agents/` with a provider deriving from `CliAgentProvider` and a
    separate static output parser.
 3. In the provider, supply the id (the `@mention` handle), display name, command name,
-   `BuildArguments`, and `ParseReply`. Discovery and session handling are inherited.
+   `BuildArguments`, and `ParseReply`. Discovery and session handling are inherited. Override
+   `ParseActivity` if the CLI reports what it is doing as it goes.
 4. Register it in `ServiceCollectionExtensions.AddRelayAgents`.
 5. Add parser and argument tests, and update the support table in `README.md`.
 
@@ -160,6 +167,11 @@ and update it in the same change.
 - Treat agent output, CLI error text and version strings as untrusted: print them only through
   `RelayConsole.Safe`, which strips control and bidirectional characters and escapes markup.
   Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
+- Activity is for the user's eyes only. Never record it in the room, never include it in what an
+  agent is sent, and never act on it: a reported refusal is shown, not approved or retried. Print
+  it through `RelayConsole.ActivityLine`, which keeps each item to one short line.
+- `ParseActivity` runs on every line an agent CLI prints, as it prints it. It must cope with any
+  text and never throw.
 - Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
 - A security fix needs a regression test that fails without it. Check that by removing the fix.
 - An agent starts another agent's turn only inside an exchange: the user named both agents at the

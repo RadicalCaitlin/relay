@@ -207,6 +207,25 @@ Folder names get a stricter version that also removes line breaks. On Linux and 
 name can contain one, and could otherwise add lines that look like Relay's own, such as a fake
 "trusted" status, right when you are deciding whether to trust it.
 
+## Activity during a turn
+
+While an agent works, Relay shows what it reports doing: what it says along the way, the tools it
+uses and the commands it runs, and anything it was refused
+(see [adr/0004-agent-activity.md](adr/0004-agent-activity.md)). This is agent output like a reply
+is, and a command or a file name in it may come from something the agent read.
+
+- **It is display only.** Activity is never recorded in the room, so it is not in `/history`, and
+  it is never part of what another agent is sent. Only a reply can reach another agent.
+- **Each item is one line.** Line breaks become spaces before the same stricter clean-up used for
+  folder names, so an item cannot add a line that looks like a message or a prompt.
+- **Each item is cut short** at 200 characters, since a command can be any length.
+- **It looks like nothing else.** Items are indented under the "Waiting for" line, in the dim
+  style, with a `-` or `!` that Relay writes.
+- **Relay reads it, and does nothing else with it.** A refusal is shown to you; Relay never
+  approves, retries or changes a permission because of one.
+- **Getting it changes no permission.** Claude Code is asked for its step-by-step output format in
+  place of its single result. That adds no flag that approves tool use or loads anything more.
+
 ## Secrets and logging
 
 - Relay has no logging. The only thing it writes to disk is the list of trusted folder paths. Room
@@ -258,9 +277,10 @@ See "Remaining risks" for the cases this does not cover.
 | **An agent that writes a handover the wrong way is not understood.** Its reply comes to you and the exchange ends without a notice. | By design: the safe way to be wrong. |
 | **Nothing in a room is private from its agents**, including what you said to a different agent, and anything pasted into the room. | By design. Private messages are not implemented. |
 | **Display spoofing with plain text.** An agent can print lines that look like chat lines, such as `You: ...`, though not in the real prompt's colours. | Accepted for now. |
-| **Unbounded output.** A CLI that printed gigabytes would exhaust memory. | Accepted for now. |
+| **Unbounded output.** A CLI that printed gigabytes would exhaust memory. Claude's step-by-step output includes the result of every tool it uses, such as the contents of each file it reads, so a long turn now holds more than its reply. | Accepted for now. |
 | **Dependencies.** NuGet packages are pinned to exact versions. GitHub Actions are pinned to major tags, not commit hashes. | Accepted for now. |
-| **Permission prompts are not surfaced.** Denials happen inside the agent CLI with no explanation in the room. | Open (#11). |
+| **Permission prompts cannot be answered.** A step that needs approval is refused inside the agent CLI. Relay shows the refusal when Claude reports one. Codex does not report a refusal as such; what its sandbox forbids appears, if at all, as a failed command or in what Codex says. | Open (#11). |
+| **Activity can show you something misleading.** What is shown is what the agent reports, cut to one short line. A long command is not shown in full, and an agent could describe a step in a way that reads as harmless. | Accepted. It is a sign of life and a prompt to look closer, not a record of what was done. |
 
 ## Reporting a problem
 

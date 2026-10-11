@@ -15,9 +15,14 @@ internal sealed class FakeSession(Func<string, CancellationToken, Task<string>> 
 
     public bool RemembersConversation { get; set; } = true;
 
-    public Task<string> SendAsync(string message, CancellationToken cancellationToken = default)
+    /// <summary>What the agent reports doing during each turn, before it replies.</summary>
+    public List<AgentActivity> Activity { get; } = [];
+
+    public Task<string> SendAsync(string message, Action<AgentActivity>? onActivity = null, CancellationToken cancellationToken = default)
     {
         Received.Add(message);
+        foreach (var activity in Activity)
+            onActivity?.Invoke(activity);
         return respond(message, cancellationToken);
     }
 
@@ -56,7 +61,10 @@ internal sealed class FakeProcessRunner(Func<ProcessRequest, ProcessResult> run)
     {
         Requests.Add(request);
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(run(request));
+        var result = run(request);
+        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            request.OnOutputLine?.Invoke(line);
+        return Task.FromResult(result);
     }
 }
 
