@@ -11,6 +11,8 @@ namespace Relay.Core.Workspaces;
 /// <remarks>
 /// A missing or corrupt file means nothing is trusted. A file that exists but cannot be read (locked,
 /// access denied) is an error, never "nothing trusted": acting on that would overwrite the list.
+/// A change is staged beside the file and renamed over it, so an interrupted write leaves the
+/// previous list in place rather than a truncated one that would read as corrupt.
 /// </remarks>
 public sealed class WorkspaceTrustStore(string? filePath)
 {
@@ -87,14 +89,25 @@ public sealed class WorkspaceTrustStore(string? filePath)
 
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
 
-        // Held exclusively across the read and the write, so two Relay processes cannot lose each other's change.
-        using var stream = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var folders = Parse(stream);
+        // A lock of its own, because the list is replaced rather than rewritten and so cannot be held
+        // open across its own replacement. Held across the read and the rename, so two Relay processes
+        // cannot lose each other's change.
+        using var gate = new FileStream(filePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        var folders = Read();
         if (!change(folders))
             return false;
 
-        stream.SetLength(0);
-        JsonSerializer.Serialize(stream, new TrustFile([.. folders]), Indented);
+        // Written whole and then renamed over the list, so an interrupted write cannot leave the list
+        // truncated. A truncated list parses as corrupt, which would mean nothing is trusted any more.
+        var staging = filePath + ".new";
+        using (var stream = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, new TrustFile([.. folders]), Indented);
+            stream.Flush(flushToDisk: true);
+        }
+
+        File.Move(staging, filePath, overwrite: true);
         return true;
     }
 

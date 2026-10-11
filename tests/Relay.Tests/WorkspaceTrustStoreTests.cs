@@ -105,6 +105,32 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
     }
 
     [Fact]
+    public void An_interrupted_change_leaves_the_previous_list_in_place()
+    {
+        var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
+        Store().Trust(other);
+        var before = File.ReadAllText(_file);
+
+        // A directory where the new list has to be staged, so the write fails after the old list was read.
+        Directory.CreateDirectory(_file + ".new");
+
+        Assert.True(Record.Exception(() => Store().Trust(_folder)) is IOException or UnauthorizedAccessException);
+        Assert.True(Record.Exception(() => Store().Revoke(other)) is IOException or UnauthorizedAccessException);
+
+        Assert.Equal(before, File.ReadAllText(_file));
+        Assert.Equal([other], Store().TrustedFolders);
+    }
+
+    [Fact]
+    public void A_finished_change_leaves_nothing_half_written_behind()
+    {
+        Store().Trust(_folder);
+        Store().Revoke(_folder);
+
+        Assert.Empty(Directory.GetFileSystemEntries(Path.GetDirectoryName(_file)!, "*.new"));
+    }
+
+    [Fact]
     public void Without_a_configuration_folder_nothing_is_trusted_and_nothing_can_be_remembered()
     {
         var store = new WorkspaceTrustStore(filePath: null);
