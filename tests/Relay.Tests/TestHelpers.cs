@@ -54,6 +54,46 @@ internal static class Poll
     }
 }
 
+/// <summary>A test of Windows file sharing, where an open file can refuse to be renamed over.</summary>
+public sealed class WindowsFactAttribute : FactAttribute
+{
+    public WindowsFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip = "Relies on Windows file sharing. Elsewhere an open file never blocks a rename.";
+    }
+}
+
+/// <summary>A test that creates a symbolic link, which Windows only allows an administrator or a developer-mode account to do.</summary>
+public sealed class SymbolicLinkFactAttribute : FactAttribute
+{
+    private static readonly bool Allowed = CanLink();
+
+    public SymbolicLinkFactAttribute()
+    {
+        if (!Allowed)
+            Skip = "This account may not create symbolic links.";
+    }
+
+    private static bool CanLink()
+    {
+        var directory = Directory.CreateTempSubdirectory("relay-link-").FullName;
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(directory, "link"), Path.Combine(directory, "target"));
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+}
+
 /// <summary>A test that sends POSIX signals, which Windows has no equivalent for outside a console.</summary>
 public sealed class UnixFactAttribute : FactAttribute
 {

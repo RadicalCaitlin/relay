@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -91,25 +93,106 @@ public sealed class WorkspaceTrustStore(string? filePath)
 
         // A lock of its own, because the list is replaced rather than rewritten and so cannot be held
         // open across its own replacement. Held across the read and the rename, so two Relay processes
-        // cannot lose each other's change.
+        // cannot lose each other's change. Opened for writing although nothing is written: over NFS an
+        // exclusive lock is only granted on a writable handle.
         using var gate = new FileStream(filePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
         var folders = Read();
         if (!change(folders))
             return false;
 
+        // When the list is a link (a configuration folder kept in a dotfiles repository), the file it
+        // points at is the one replaced. Renaming over the link itself would quietly unlink the two.
+        var link = new FileInfo(filePath);
+        var target = link.LinkTarget is null ? filePath : link.ResolveLinkTarget(returnFinalTarget: true)!.FullName;
+
         // Written whole and then renamed over the list, so an interrupted write cannot leave the list
         // truncated. A truncated list parses as corrupt, which would mean nothing is trusted any more.
-        var staging = filePath + ".new";
-        using (var stream = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
+        var staging = target + ".new";
+        try
         {
-            JsonSerializer.Serialize(stream, new TrustFile([.. folders]), Indented);
-            stream.Flush(flushToDisk: true);
+            using (var stream = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                // Before anything is written, so the new list is never readable by more people than the old one.
+                CopyPermissions(target, stream);
+                JsonSerializer.Serialize(stream, new TrustFile([.. folders]), Indented);
+                stream.Flush(flushToDisk: true);
+            }
+
+            MoveOver(staging, target);
+        }
+        finally
+        {
+            File.Delete(staging);
         }
 
-        File.Move(staging, filePath, overwrite: true);
+        if (!OperatingSystem.IsWindows())
+            FlushDirectory(Path.GetDirectoryName(target)!);
+
         return true;
     }
+
+    /// <summary>The new list replaces the old file, so whatever the user restricted on the old one has to be carried over.</summary>
+    private static void CopyPermissions(string from, FileStream to)
+    {
+        if (!File.Exists(from))
+            return;
+
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(to.SafeFileHandle, File.GetUnixFileMode(from));
+            return;
+        }
+
+        // Rebuilt from its text form: a FileSecurity read from one file saves nothing when applied to another.
+        var access = new FileSecurity();
+        access.SetSecurityDescriptorSddlForm(
+            new FileInfo(from).GetAccessControl(AccessControlSections.Access).GetSecurityDescriptorSddlForm(AccessControlSections.Access),
+            AccessControlSections.Access);
+        new FileInfo(to.Name).SetAccessControl(access);
+    }
+
+    private static void MoveOver(string staging, string target)
+    {
+        // Windows refuses the rename while either file is open: the list for as long as another Relay
+        // takes to read it, the staging file for as long as a virus scanner or the search indexer looks
+        // at what was just written. Both pass in a moment.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(staging, target, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 5)
+            {
+                Thread.Sleep(20 * attempt);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes the rename itself survive a power loss, not just the new file's contents. Best effort:
+    /// the list is complete either way, and not every file system can flush a directory.
+    /// </summary>
+    private static void FlushDirectory(string directory)
+    {
+        var descriptor = open(directory, 0);
+        if (descriptor < 0)
+            return;
+
+        _ = fsync(descriptor);
+        _ = close(descriptor);
+    }
+
+    [DllImport("libc")]
+    private static extern int open(string path, int flags);
+
+    [DllImport("libc")]
+    private static extern int fsync(int descriptor);
+
+    [DllImport("libc")]
+    private static extern int close(int descriptor);
 
     private static List<string> Parse(Stream stream)
     {
