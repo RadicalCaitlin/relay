@@ -12,6 +12,12 @@ public sealed record ProcessRequest(string FileName, IReadOnlyList<string> Argum
     public string? WorkingDirectory { get; init; }
 
     public TimeSpan? Timeout { get; init; }
+
+    /// <summary>
+    /// Called with each line of standard output as the process writes it, without its line ending,
+    /// from the thread that reads the output. The whole output is still returned at the end.
+    /// </summary>
+    public Action<string>? OnOutputLine { get; init; }
 }
 
 public sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
@@ -69,7 +75,7 @@ public sealed class ProcessRunner : IProcessRunner
 
         var output = new StringBuilder();
         var error = new StringBuilder();
-        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput, output), PumpAsync(process.StandardError, error));
+        var pumps = Task.WhenAll(PumpAsync(process.StandardOutput, output, request.OnOutputLine), PumpAsync(process.StandardError, error));
         try
         {
             await WriteInputAsync(process, request.StandardInput, timeout.Token);
@@ -99,9 +105,10 @@ public sealed class ProcessRunner : IProcessRunner
         }
     }
 
-    private static async Task PumpAsync(StreamReader reader, StringBuilder sink)
+    private static async Task PumpAsync(StreamReader reader, StringBuilder sink, Action<string>? onLine = null)
     {
         var buffer = new char[4096];
+        var line = new StringBuilder();
         try
         {
             int read;
@@ -109,12 +116,29 @@ public sealed class ProcessRunner : IProcessRunner
             {
                 lock (sink)
                     sink.Append(buffer, 0, read);
+                if (onLine is null)
+                    continue;
+
+                for (var i = 0; i < read; i++)
+                {
+                    if (buffer[i] != '\n')
+                    {
+                        line.Append(buffer[i]);
+                        continue;
+                    }
+
+                    onLine(line.ToString().TrimEnd('\r'));
+                    line.Clear();
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             // The process was killed or disposed mid-read; what was captured so far is all there is.
         }
+
+        if (onLine is not null && line.Length > 0)
+            onLine(line.ToString().TrimEnd('\r'));
     }
 
     private static string Snapshot(StringBuilder sink)

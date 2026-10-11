@@ -29,4 +29,6 @@ public sealed class CodexProvider(IExecutableLocator locator, IProcessRunner run
             : ["exec", "resume", "--json", sessionId, "-"];
 
     public override AgentReply ParseReply(ProcessResult result) => CodexOutputParser.Parse(result);
+
+    public override IEnumerable<AgentActivity> ParseActivity(string line) => CodexOutputParser.ParseActivity(line);
 }

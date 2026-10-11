@@ -5,27 +5,41 @@ using Relay.Core.Agents;
 
 namespace Relay.Agents.Claude;
 
-/// <summary>Parses the single JSON object printed by <c>claude -p --output-format json</c>.</summary>
+/// <summary>
+/// Parses what <c>claude -p --output-format stream-json --verbose</c> prints: one JSON object per
+/// line as the turn goes on, ending with a <c>result</c> object that holds the reply.
+/// </summary>
 public static class ClaudeOutputParser
 {
+    // The parts of a tool's input that say what it was used on, most telling first.
+    private static readonly string[] SubjectKeys = ["command", "file_path", "pattern", "url", "query", "description"];
+
     public static AgentReply Parse(ProcessResult result)
     {
-        JsonDocument document;
-        try
+        // The result is the last object that is either marked as one or not marked at all; every
+        // other line of the stream names its own type.
+        JsonDocument? document = null;
+        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            document = JsonDocument.Parse(result.StandardOutput);
+            if (!CliJson.TryParseObject(line, out var candidate))
+                continue;
+            if (candidate.RootElement.GetStringOrNull("type") is null or "result")
+            {
+                document?.Dispose();
+                document = candidate;
+            }
+            else
+            {
+                candidate.Dispose();
+            }
         }
-        catch (JsonException)
-        {
+
+        if (document is null)
             throw new AgentException($"claude {CliFailure.Describe(result)}");
-        }
 
         using (document)
         {
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                throw new AgentException($"claude {CliFailure.Describe(result)}");
-
             var text = root.GetStringOrNull("result");
             var isError = root.TryGetProperty("is_error", out var flag) && flag.ValueKind == JsonValueKind.True;
 
@@ -43,5 +57,66 @@ public static class ClaudeOutputParser
 
             return new(text.Trim(), root.GetStringOrNull("session_id"));
         }
+    }
+
+    /// <summary>What one line of the stream says Claude is doing: what it said, a tool it used, or a tool it was refused.</summary>
+    public static IEnumerable<AgentActivity> ParseActivity(string line)
+    {
+        if (!CliJson.TryParseObject(line, out var document))
+            return [];
+
+        using (document)
+        {
+            var root = document.RootElement;
+            return (root.GetStringOrNull("type"), root.GetStringOrNull("subtype")) switch
+            {
+                ("assistant", _) => [.. Said(root)],
+                ("system", "permission_denied") => [Refused(root)],
+                _ => [],
+            };
+        }
+    }
+
+    private static IEnumerable<AgentActivity> Said(JsonElement root)
+    {
+        if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
+            || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            yield break;
+
+        foreach (var block in content.EnumerateArray())
+        {
+            switch (block.GetStringOrNull("type"))
+            {
+                case "text" when block.GetStringOrNull("text") is { } text && !string.IsNullOrWhiteSpace(text):
+                    yield return new(AgentActivityKind.Note, text.Trim());
+                    break;
+                case "tool_use":
+                    yield return new(AgentActivityKind.Action, DescribeTool(block));
+                    break;
+            }
+        }
+    }
+
+    private static string DescribeTool(JsonElement toolUse)
+    {
+        var name = toolUse.GetStringOrNull("name") ?? "tool";
+        if (toolUse.TryGetProperty("input", out var input))
+        {
+            foreach (var key in SubjectKeys)
+            {
+                if (input.GetStringOrNull(key) is { Length: > 0 } subject)
+                    return $"{name}: {subject}";
+            }
+        }
+
+        return name;
+    }
+
+    private static AgentActivity Refused(JsonElement root)
+    {
+        var tool = root.GetStringOrNull("tool_name") ?? "A tool";
+        return new(AgentActivityKind.Problem, root.GetStringOrNull("message") is { Length: > 0 } reason
+            ? $"{tool} was not allowed: {reason}"
+            : $"{tool} was not allowed.");
     }
 }

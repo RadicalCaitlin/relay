@@ -19,8 +19,12 @@ public interface IAgentSession : IAsyncDisposable
     /// </summary>
     bool RemembersConversation { get; }
 
+    /// <param name="onActivity">
+    /// Called with what the agent does while it works, as it happens, and never with the reply itself.
+    /// It may be called from another thread, and not at all by an agent that reports nothing.
+    /// </param>
     /// <exception cref="AgentException">The agent could not produce a response.</exception>
-    Task<string> SendAsync(string message, CancellationToken cancellationToken = default);
+    Task<string> SendAsync(string message, Action<AgentActivity>? onActivity = null, CancellationToken cancellationToken = default);
 
     /// <summary>Forgets the agent's conversation so the next message starts a new one.</summary>
     void Reset();

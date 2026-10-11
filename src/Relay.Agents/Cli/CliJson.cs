@@ -8,4 +8,25 @@ internal static class CliJson
         => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    /// <summary>Parses a line that should be one JSON object. The caller disposes the document when this returns true.</summary>
+    public static bool TryParseObject(string line, out JsonDocument document)
+    {
+        try
+        {
+            document = JsonDocument.Parse(line);
+        }
+        catch (JsonException)
+        {
+            document = null!;
+            return false;
+        }
+
+        if (document.RootElement.ValueKind == JsonValueKind.Object)
+            return true;
+
+        document.Dispose();
+        document = null!;
+        return false;
+    }
 }

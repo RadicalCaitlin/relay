@@ -9,7 +9,8 @@ public sealed partial class CliAgentSession(
     string executablePath,
     string workingDirectory,
     Func<string?, IReadOnlyList<string>> buildArguments,
-    Func<ProcessResult, AgentReply> parseReply) : IAgentSession
+    Func<ProcessResult, AgentReply> parseReply,
+    Func<string, IEnumerable<AgentActivity>>? parseActivity = null) : IAgentSession
 {
     private readonly CancellationTokenSource _disposal = new();
     private volatile AgentSessionState _state = AgentSessionState.Ready;
@@ -21,7 +22,7 @@ public sealed partial class CliAgentSession(
     // Without an id to resume, every turn starts a new conversation in the CLI.
     public bool RemembersConversation => _sessionId is not null;
 
-    public async Task<string> SendAsync(string message, CancellationToken cancellationToken = default)
+    public async Task<string> SendAsync(string message, Action<AgentActivity>? onActivity = null, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_state == AgentSessionState.Closed, this);
         if (Interlocked.Exchange(ref _busy, 1) == 1)
@@ -36,6 +37,7 @@ public sealed partial class CliAgentSession(
             {
                 StandardInput = message,
                 WorkingDirectory = workingDirectory,
+                OnOutputLine = onActivity is null || parseActivity is null ? null : ActivityReporter(parseActivity, onActivity),
             };
             var reply = parseReply(await runner.RunAsync(request, linked.Token));
 
@@ -80,6 +82,24 @@ public sealed partial class CliAgentSession(
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    // The last thing an agent says in a turn is its reply, which the caller is given as the result.
+    // So a note is held back until something follows it, and the one still held at the end is dropped.
+    private static Action<string> ActivityReporter(Func<string, IEnumerable<AgentActivity>> parse, Action<AgentActivity> report)
+    {
+        AgentActivity? held = null;
+        return line =>
+        {
+            foreach (var activity in parse(line))
+            {
+                if (held is not null)
+                    report(held);
+                held = activity.Kind == AgentActivityKind.Note ? activity : null;
+                if (held is null)
+                    report(activity);
+            }
+        };
     }
 
     private void Transition(AgentSessionState next)

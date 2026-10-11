@@ -20,6 +20,19 @@ internal static class RelayConsole
     public static string SafeLine(string text)
         => Markup.Escape(string.Concat(text.Where(c => !IsUnsafe(c))));
 
+    /// <summary>
+    /// One safe line describing a step an agent took: line breaks become spaces, paths under
+    /// <paramref name="folder"/> are shown relative to it, and anything long is cut short, because a
+    /// command or a note can be any length.
+    /// </summary>
+    public static string ActivityLine(string text, string folder)
+    {
+        const int maxLength = 200;
+        var line = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .Replace(Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar, string.Empty, StringComparison.OrdinalIgnoreCase);
+        return SafeLine(line.Length > maxLength ? line[..maxLength] + "..." : line);
+    }
+
     private static bool IsUnsafe(char c) => char.IsControl(c) || IsBidiControl(c);
 
     // Written as escapes on purpose: the characters themselves are invisible in an editor or a diff.

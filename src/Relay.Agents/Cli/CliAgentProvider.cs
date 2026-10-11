@@ -27,6 +27,12 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     /// <exception cref="AgentException">The output does not contain a usable response.</exception>
     public abstract AgentReply ParseReply(ProcessResult result);
 
+    /// <summary>
+    /// What one line of the CLI's output says the agent is doing, if anything. Called as the line is
+    /// written, so it must cope with any text and never throw.
+    /// </summary>
+    public virtual IEnumerable<AgentActivity> ParseActivity(string line) => [];
+
     public async Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default)
     {
         if (locator.Find(Command) is not { } path)
@@ -40,7 +46,7 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     {
         if (discovery.ExecutablePath is not { } path)
             throw new InvalidOperationException($"{DisplayName} is not installed.");
-        return new CliAgentSession(runner, path, options.WorkingDirectory, sessionId => BuildArguments(sessionId, options), ParseReply);
+        return new CliAgentSession(runner, path, options.WorkingDirectory, sessionId => BuildArguments(sessionId, options), ParseReply, ParseActivity);
     }
 
     private async Task<string?> GetVersionAsync(string path, CancellationToken cancellationToken)
