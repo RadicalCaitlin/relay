@@ -5,6 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- Every process a test runs holds two pool threads reading its output, and tests run in
+         parallel. With the default minimum of one thread per core, a four-core CI machine ran out,
+         and work then waited seconds for a thread: long enough to fail tests that time a run. -->
+    <ThreadPoolMinThreads>64</ThreadPoolMinThreads>
   </PropertyGroup>
 
   <ItemGroup>

@@ -180,18 +180,32 @@ public sealed class WorkspaceTrustStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task A_change_goes_through_while_another_Relay_is_reading_the_list()
+    public void A_change_goes_through_while_another_Relay_is_reading_the_list()
     {
         var other = Directory.CreateDirectory(Path.Combine(_directory, "other")).FullName;
         Store().Trust(other);
 
-        // Open the way the store reads it, and for about as long.
-        var reader = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var released = Task.Delay(30).ContinueWith(_ => reader.Dispose());
+        // Open the way the store reads it, and let go a moment after the store has staged the new
+        // list, which is when it starts trying to rename over the one held open here. The wait is
+        // tied to what the store is doing, and runs on a thread of its own: a timer waits its turn
+        // on the thread pool, and on a busy machine that turn came after the store had given up.
+        using var reader = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = new Thread(() =>
+        {
+            SpinWait.SpinUntil(() => File.Exists(_file + ".new"), TimeSpan.FromSeconds(10));
+            Thread.Sleep(50);
+            reader.Dispose();
+        });
+        release.Start();
+        try
+        {
+            Assert.True(Store().Revoke(other));
+        }
+        finally
+        {
+            release.Join();
+        }
 
-        Assert.True(Store().Revoke(other));
-
-        await released;
         Assert.Empty(Store().TrustedFolders);
     }
 
