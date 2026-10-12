@@ -292,6 +292,8 @@ public sealed class ActivityTests : IDisposable
                 "echo first; (i=0; while [ ! -e go ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; [ -e go ] && echo late; : > done) &"]);
         var lines = new List<string>();
 
+        var before = $"threads {ThreadPool.ThreadCount}, pending {ThreadPool.PendingWorkItemCount}";
+        var ran = System.Diagnostics.Stopwatch.StartNew();
         var result = await new ProcessRunner().RunAsync(request with
         {
             WorkingDirectory = _harness.Directory,
@@ -301,6 +303,14 @@ public sealed class ActivityTests : IDisposable
                     lines.Add(line);
             },
         });
+        ran.Stop();
+        var after = $"threads {ThreadPool.ThreadCount}, pending {ThreadPool.PendingWorkItemCount}";
+        var queued = System.Diagnostics.Stopwatch.StartNew();
+        await Task.Run(() => { });
+        // TEMPORARY, for #49: what the thread pool looked like when the first line went missing on CI.
+        Assert.True(Lines(result.StandardOutput).SequenceEqual(["first"]),
+            $"stdout '{result.StandardOutput}', stderr '{result.StandardError}', exit {result.ExitCode}, run took {ran.ElapsedMilliseconds} ms, "
+            + $"cores {Environment.ProcessorCount}, pool before: {before}, after: {after}, a queued item waited {queued.ElapsedMilliseconds} ms");
         File.WriteAllText(_harness.PathTo("go"), string.Empty);
         await Poll.UntilAsync(() => File.Exists(_harness.PathTo("done")), "the background process has written its line");
         // The line is in the pipe by now. This is for the reader still attached to it to pass it on, if it were going to.
