@@ -356,7 +356,7 @@ internal sealed class StartCommand(
     {
         while (true)
         {
-            var read = _read ??= Task.Run(Console.ReadLine);
+            var read = _read ??= Task.Run(streams.ReadLine);
             try
             {
                 read.Wait(cancellationToken);
@@ -554,16 +554,21 @@ internal sealed class StartCommand(
 
     // Ctrl+C cancels the request in flight; with nothing in flight it exits as usual.
     private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+        => e.Cancel = Interrupt();
+
+    /// <returns>Whether a turn was cancelled. When none was, Relay is about to exit.</returns>
+    internal bool Interrupt()
     {
-        e.Cancel = CancelTurn();
-        if (!e.Cancel)
+        var cancelled = CancelTurn();
+        if (!cancelled)
             RemoveApprovalFolder();
+        return cancelled;
     }
 
     // Relay is being closed (terminal closed, kill, logoff). The agent CLI would otherwise outlive it, so
     // stop the request in flight and hold the shutdown until its process tree is gone. The signal is not
     // cancelled, so Relay still exits afterwards.
-    private void OnTerminating(PosixSignalContext context)
+    internal void OnTerminating(PosixSignalContext context)
     {
         if (CancelTurn())
             _idle.Wait(ShutdownGrace);

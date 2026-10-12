@@ -16,7 +16,8 @@ internal sealed record ApprovalRequest(string ToolName, JsonElement Input);
 /// Given a request, returns the answer for the agent's CLI. Called on a thread of its own, and may
 /// wait for the user. Its token is cancelled when whoever asked has stopped waiting for the answer.
 /// </param>
-internal sealed class ApprovalServer(Func<ApprovalRequest, CancellationToken, string> decide) : IAsyncDisposable
+/// <param name="open">Opens one more end of the pipe of the given name. A seam: a test cannot otherwise make that fail.</param>
+internal sealed class ApprovalServer(Func<ApprovalRequest, CancellationToken, string> decide, Func<string, NamedPipeServerStream>? open = null) : IAsyncDisposable
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
 
@@ -51,9 +52,11 @@ internal sealed class ApprovalServer(Func<ApprovalRequest, CancellationToken, st
         _stopping.Dispose();
     }
 
-    private NamedPipeServerStream Open()
-        => new(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+    public static NamedPipeServerStream OpenPipe(string name)
+        => new(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+    private NamedPipeServerStream Open() => (open ?? OpenPipe)(PipeName);
 
     private async Task AcceptAsync(NamedPipeServerStream first)
     {

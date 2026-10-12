@@ -32,6 +32,8 @@ public sealed class WorkspaceTrustPromptTests : IDisposable
         public void DiscardPendingInput()
         {
         }
+
+        public string? ReadLine() => null;
     }
 
     private static TestConsole Terminal(string answer)

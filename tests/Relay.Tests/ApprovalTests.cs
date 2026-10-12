@@ -562,6 +562,31 @@ public sealed class ApprovalTests : IDisposable
     }
 
     [Fact]
+    public async Task A_pipe_that_could_not_be_opened_for_the_next_request_is_opened_again()
+    {
+        var opened = 0;
+        await using var server = new ApprovalServer(
+            (_, _) => ApprovalBridge.Refusal("no"),
+            name => Interlocked.Increment(ref opened) == 2 ? throw new IOException("All pipe instances are busy.") : ApprovalServer.OpenPipe(name));
+        server.Start();
+
+        async Task<string?> AskAsync()
+        {
+            await using var pipe = new NamedPipeClientStream(".", server.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(TimeSpan.FromSeconds(20), CancellationToken.None);
+            await using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+            using var reader = new StreamReader(pipe, leaveOpen: true);
+            await writer.WriteLineAsync("""{"tool_name":"Bash","input":{"command":"ls"}}""");
+            return Json((await reader.ReadLineAsync())!).GetProperty("behavior").GetString();
+        }
+
+        Assert.Equal("deny", await AskAsync());
+        // The end of the pipe this one connects to is the one that failed to open the first time.
+        Assert.Equal("deny", await AskAsync());
+        Assert.True(opened >= 3, $"The pipe was opened {opened} times.");
+    }
+
+    [Fact]
     public async Task With_no_relay_to_ask_the_answer_is_no()
     {
         var bridge = _harness.Start(ApprovalBridge.Command, $"relay-{Guid.NewGuid():N}"[..22]);

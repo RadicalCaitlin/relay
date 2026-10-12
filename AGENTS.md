@@ -127,6 +127,9 @@ The build must stay free of warnings and the tests must pass before a change is 
   signed in to, for two short turns. Run it when Claude Code is upgraded or its arguments change.
 - `ApprovalTests` asks the questions in process, through `ApprovalDesk`, for the same reason the
   folder-trust question is: with redirected streams Relay asks nobody.
+- `StartCommandApprovalTests` runs the chatroom itself in process, with a fake `IConsoleStreams`
+  as the keyboard and an agent that asks over the real pipe. Use it for what depends on when a
+  line is typed, or on how Relay leaves.
 
 ## Adding an agent provider
 
