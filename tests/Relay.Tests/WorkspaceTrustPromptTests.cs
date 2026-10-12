@@ -36,8 +36,8 @@ public sealed class WorkspaceTrustPromptTests : IDisposable
         return console;
     }
 
-    private WorkspaceTrustDecision Resolve(TestConsole console, Streams streams)
-        => new WorkspaceTrustPrompt(console, new WorkspaceTrustStore(_file), streams).Resolve(trustWorkspace: false, _folder);
+    private WorkspaceTrustDecision Resolve(TestConsole console, Streams streams, WorkspaceTrustStore? store = null)
+        => new WorkspaceTrustPrompt(console, store ?? new WorkspaceTrustStore(_file), streams).Resolve(trustWorkspace: false, _folder);
 
     [Fact]
     public void Yes_trusts_the_folder_and_remembers_it()
@@ -51,6 +51,20 @@ public sealed class WorkspaceTrustPromptTests : IDisposable
         Assert.Contains(Question, console.Output);
         // A later run reads the answer back from the user's own configuration folder.
         Assert.True(new WorkspaceTrustStore(_file).IsTrusted(_folder));
+    }
+
+    [Fact]
+    public void Yes_that_cannot_be_written_down_says_so_and_trusts_the_folder_for_this_session_only()
+    {
+        var console = Terminal("y");
+
+        // No configuration folder to write to: the choice cannot outlive this run.
+        var decision = Resolve(console, NothingRedirected, new WorkspaceTrustStore(filePath: null));
+
+        Assert.True(decision.Trusted);
+        Assert.Contains("(trusted for this session)", decision.Status);
+        Assert.Contains("Could not remember this choice", console.Output);
+        Assert.False(File.Exists(_file));
     }
 
     [Fact]
