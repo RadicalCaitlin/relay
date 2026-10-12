@@ -510,6 +510,35 @@ public sealed class CliSmokeTests : IDisposable
     }
 
     [Fact]
+    public async Task Codex_outside_a_git_repository_says_what_to_do_and_is_usable_again_afterwards()
+    {
+        const string refusal = "Not inside a trusted directory and --skip-git-repo-check was not specified.\n";
+        _harness.InstallAgent("codex", stdout: "", stderr: refusal, exitCode: 1);
+        var relay = _harness.Start("start");
+        await relay.StandardInput.WriteLineAsync("a note for later");
+        // Twice, because a refusal that used up a delivery would withhold the note from the third try.
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await relay.StandardInput.WriteLineAsync($"@codex try {attempt}");
+            await Poll.UntilAsync(() => _harness.Invocations("codex").Count == attempt, $"turn {attempt} has run");
+        }
+
+        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("only runs inside a Git repository")), "the explanation is shown");
+        _harness.SetAgentOutput("codex", CodexReply("pong"));
+        await relay.StandardInput.WriteLineAsync("@codex once more");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(0, relay.ExitCode);
+        AssertShown("Start Relay from a repository, or run 'git init' here", _harness.Output);
+        AssertShown("Relay does not pass --skip-git-repo-check for you", _harness.Output);
+        AssertNotShown("Not inside a trusted directory", _harness.Output);
+        AssertShown("Codex: pong", _harness.Output);
+        // Neither refusal used up a delivery, so the note Codex never saw is still in the turn that worked.
+        Assert.Contains("a note for later", _harness.StandardInput("codex"));
+    }
+
+    [Fact]
     public async Task Agent_that_prints_something_unexpected_is_reported_as_a_failure()
     {
         _harness.InstallAgent("claude", "this is not json\n");

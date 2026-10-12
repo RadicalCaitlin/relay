@@ -410,4 +410,32 @@ public class CliAgentTests
 
         Assert.Equal("codex exited with code 1: Not inside a trusted directory", ex.Message);
     }
+
+    [Fact]
+    public void Codex_parser_explains_the_refusal_to_run_outside_a_git_repository()
+    {
+        var stderr = "Not inside a trusted directory and --skip-git-repo-check was not specified.";
+
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, string.Empty, stderr)));
+
+        Assert.StartsWith("codex only runs inside a Git repository, and this folder is not one.", ex.Message);
+        Assert.Contains("git init", ex.Message);
+        Assert.DoesNotContain("Not inside a trusted directory", ex.Message);
+        // The refusal happens before Codex starts a turn, so it has not been shown the room.
+        Assert.False(ex.PromptMayHaveBeenRead);
+    }
+
+    [Theory]
+    // Mentions the flag, but is not the refusal: the original diagnosis is what helps here.
+    [InlineData("", "warning: --skip-git-repo-check is disabled. Authentication failed.")]
+    // Names the whole clause, but a turn had already started, so it is not the startup refusal.
+    [InlineData("""{"type":"thread.started","thread_id":"t1"}""", "--skip-git-repo-check was not specified")]
+    public void Codex_parser_keeps_the_original_diagnosis_for_other_errors_that_mention_the_flag(string stdout, string stderr)
+    {
+        var ex = Assert.Throws<AgentException>(() => CodexOutputParser.Parse(new(1, stdout, stderr)));
+
+        Assert.StartsWith("codex exited with code 1: ", ex.Message);
+        Assert.DoesNotContain("only runs inside a Git repository", ex.Message);
+        Assert.True(ex.PromptMayHaveBeenRead);
+    }
 }
