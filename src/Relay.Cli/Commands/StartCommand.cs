@@ -14,7 +14,8 @@ internal sealed class StartCommand(
     AgentDiscoveryService discovery,
     IRoomManager rooms,
     MessageRouter router,
-    WorkspaceTrustPrompt trustPrompt) : AsyncCommand<StartCommand.Settings>
+    WorkspaceTrustPrompt trustPrompt,
+    IConsoleStreams streams) : AsyncCommand<StartCommand.Settings>
 {
     internal sealed class Settings : CommandSettings
     {
@@ -90,7 +91,7 @@ internal sealed class StartCommand(
                     break;
                 case "/clear":
                     // There is no screen to clear when output goes to a file or a pipe, and trying to throws.
-                    if (!Console.IsOutputRedirected)
+                    if (!streams.IsOutputRedirected)
                         console.Clear();
                     WriteHeader(room);
                     break;

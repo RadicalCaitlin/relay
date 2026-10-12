@@ -236,16 +236,7 @@ internal sealed class RelayHarness : IDisposable
             _output.AppendLine(line);
     }
 
-    // The CLI is built alongside the tests (see the project reference) but not copied next to them.
-    private static string RelayAssembly()
-    {
-        var output = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
-        var configuration = output.Parent!.Name;
-
-        var root = output;
-        while (!File.Exists(Path.Combine(root.FullName, "Relay.slnx")))
-            root = root.Parent ?? throw new InvalidOperationException("Relay.slnx not found above the test output directory.");
-
-        return Path.Combine(root.FullName, "src", "Relay.Cli", "bin", configuration, output.Name, "relay.dll");
-    }
+    // The copy the project reference puts next to the tests, so the tests that launch the CLI and
+    // the tests that call into it run the same build.
+    private static string RelayAssembly() => Path.Combine(AppContext.BaseDirectory, "relay.dll");
 }

@@ -1,0 +1,9 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- One version for every Spectre.Console package: the tests' TestConsole must be built
+         against the same Spectre.Console as the CLI it is handed to. -->
+    <SpectreConsoleVersion>0.57.2</SpectreConsoleVersion>
+  </PropertyGroup>
+
+</Project>
