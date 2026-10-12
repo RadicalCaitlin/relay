@@ -181,6 +181,8 @@ Claude: I could not add src/Retry.cs: writing files needs your approval.
 - Claude's own reasoning is not shown, because Claude Code does not make it available. Codex
   reports what it says and the commands it runs.
 
+See [docs/adr/0004-agent-activity.md](docs/adr/0004-agent-activity.md) for the design.
+
 ### Approving a step
 
 Each agent is limited by its own settings. When Claude wants to take a step those settings do not
@@ -213,8 +215,6 @@ Claude: Saved the date to today.txt.
   the step is refused, as before. Codex cannot ask: a step its own settings do not allow fails.
 
 See [docs/adr/0005-approvals.md](docs/adr/0005-approvals.md) for the design.
-
-See [docs/adr/0004-agent-activity.md](docs/adr/0004-agent-activity.md) for the design.
 
 ### Folder trust
 

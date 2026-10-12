@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Relay.Agents.Cli;
 using Relay.Core.Agents;
 
 namespace Relay.Cli.Approvals;
@@ -16,7 +18,7 @@ internal static class ApprovalBridge
 {
     public const string Command = "approval-tool";
 
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+    public static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
 
     public static async Task<int> RunAsync(string pipeName, Stream input, Stream output)
@@ -24,6 +26,8 @@ internal static class ApprovalBridge
         using var reader = new StreamReader(input, Utf8NoBom);
         await using var writer = new StreamWriter(output, Utf8NoBom) { NewLine = "\n" };
         using var writing = new SemaphoreSlim(1);
+        // The calls still waiting for the user, by request id, so the CLI can withdraw one.
+        var waiting = new ConcurrentDictionary<string, CancellationTokenSource>();
 
         async Task SendAsync(JsonObject message)
         {
@@ -43,7 +47,12 @@ internal static class ApprovalBridge
         while (await reader.ReadLineAsync() is { } line)
         {
             if (!TryReadRequest(line, out var id, out var method, out var parameters))
+            {
+                // The CLI has stopped waiting for a call. Closing the pipe is how Relay is told.
+                if (TryReadCancelled(line, out var cancelled) && waiting.TryRemove(cancelled, out var given))
+                    Cancel(given);
                 continue;
+            }
 
             switch (method)
             {
@@ -65,10 +74,20 @@ internal static class ApprovalBridge
                     && parameters.TryGetProperty("arguments", out var arguments) && arguments.ValueKind == JsonValueKind.Object:
                     // Not awaited: the user may take minutes, and the CLI must still get an answer to a ping.
                     var question = arguments.GetRawText();
-                    _ = Task.Run(async () => await SendAsync(Result(id, new JsonObject
+                    var key = id.ToJsonString();
+                    var withdrawn = new CancellationTokenSource();
+                    waiting[key] = withdrawn;
+                    _ = Task.Run(async () =>
                     {
-                        ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = await AskRelayAsync(pipeName, question) }),
-                    })));
+                        using (withdrawn)
+                        {
+                            // A call the CLI withdrew is not answered: it is no longer waiting for one.
+                            var answer = await AskRelayAsync(pipeName, question, withdrawn.Token);
+                            waiting.TryRemove(KeyValuePair.Create(key, withdrawn));
+                            if (answer is not null)
+                                await SendAsync(Result(id, new JsonObject { ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = answer }) }));
+                        }
+                    });
                     break;
                 default:
                     await SendAsync(new JsonObject
@@ -113,10 +132,38 @@ internal static class ApprovalBridge
         }
     }
 
-    private static string? GetStringOrNull(this JsonElement element, string name)
-        => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
+    // "notifications/cancelled" names the request the CLI has given up on.
+    private static bool TryReadCancelled(string line, out string key)
+    {
+        key = string.Empty;
+        if (!CliJson.TryParseObject(line.AsMemory(), out var document))
+            return false;
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.GetStringOrNull("method") != "notifications/cancelled"
+                || !root.TryGetProperty("params", out var parameters) || parameters.ValueKind != JsonValueKind.Object
+                || !parameters.TryGetProperty("requestId", out var requestId)
+                || requestId.ValueKind is not (JsonValueKind.Number or JsonValueKind.String))
+                return false;
+
+            key = requestId.GetRawText();
+            return true;
+        }
+    }
+
+    private static void Cancel(CancellationTokenSource withdrawn)
+    {
+        try
+        {
+            withdrawn.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // It was answered at the same moment.
+        }
+    }
 
     private static JsonObject Result(JsonNode id, JsonObject result)
         => new() { ["jsonrpc"] = "2.0", ["id"] = id.DeepClone(), ["result"] = result };
@@ -137,19 +184,25 @@ internal static class ApprovalBridge
         },
     };
 
-    private static async Task<string> AskRelayAsync(string pipeName, string question)
+    /// <returns>The answer, or null when the CLI withdrew the call before there was one.</returns>
+    private static async Task<string?> AskRelayAsync(string pipeName, string question, CancellationToken cancellationToken)
     {
         try
         {
             await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-            await pipe.ConnectAsync(ConnectTimeout, CancellationToken.None);
+            await pipe.ConnectAsync(ConnectTimeout, cancellationToken);
             await using var writer = new StreamWriter(pipe, Utf8NoBom, leaveOpen: true) { NewLine = "\n" };
             using var reader = new StreamReader(pipe, Utf8NoBom, leaveOpen: true);
-            await writer.WriteLineAsync(question);
-            await writer.FlushAsync();
-            return await reader.ReadLineAsync() ?? Refusal("Relay stopped before the user answered, so this was refused.");
+            await writer.WriteLineAsync(question.AsMemory(), cancellationToken);
+            await writer.FlushAsync(cancellationToken);
+            return await reader.ReadLineAsync(cancellationToken) ?? Refusal("Relay stopped before the user answered, so this was refused.");
         }
-        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or ArgumentException)
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        // Whatever went wrong, the CLI is waiting for an answer, and the only one this program may give on its own is no.
+        catch (Exception)
         {
             return Refusal("The user could not be asked, so this was refused.");
         }

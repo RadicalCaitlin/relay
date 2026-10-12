@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Relay.Agents.Cli;
 using Relay.Cli.Ui;
 
 namespace Relay.Cli.Approvals;
@@ -28,13 +29,14 @@ internal static class ApprovalText
     public static IReadOnlyList<string>? Describe(JsonElement input)
     {
         List<string> lines = [];
-        var fields = 0;
+        var others = 0;
         foreach (var field in input.EnumerateObject())
         {
-            if (++fields > MaxFields)
+            // The limit is on what else is shown. A command is never one of the fields left out.
+            var whole = field.Name == CommandKey;
+            if (!whole && ++others > MaxFields)
                 continue;
 
-            var whole = field.Name == CommandKey;
             var value = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString()! : field.Value.GetRawText();
             var text = value.ReplaceLineEndings("\n").Replace("\t", "    ").Split('\n');
             if (whole && (value.Length > MaxCommandLength || text.Length > MaxCommandLines))
@@ -54,8 +56,8 @@ internal static class ApprovalText
                 lines.Add($"      [yellow]| ... and {text.Length - shown} more lines that are not shown[/]");
         }
 
-        if (fields > MaxFields)
-            lines.Add($"      [yellow]... and {fields - MaxFields} more fields that are not shown[/]");
+        if (others > MaxFields)
+            lines.Add($"      [yellow]... and {others - MaxFields} more fields that are not shown[/]");
         return lines;
     }
 
@@ -72,7 +74,7 @@ internal static class ApprovalText
         List<Question> questions = [];
         foreach (var item in asked.EnumerateArray())
         {
-            if (String(item, "question") is not { Length: > 0 } text || questions.Any(q => q.Text == text))
+            if (item.GetStringOrNull("question") is not { Length: > 0 } text || questions.Any(q => q.Text == text))
                 return null;
 
             List<QuestionOption> options = [];
@@ -82,9 +84,9 @@ internal static class ApprovalText
                     return null;
                 foreach (var option in offered.EnumerateArray())
                 {
-                    if (String(option, "label") is not { Length: > 0 } label)
+                    if (option.GetStringOrNull("label") is not { Length: > 0 } label)
                         return null;
-                    options.Add(new(label, String(option, "description")));
+                    options.Add(new(label, option.GetStringOrNull("description")));
                 }
             }
 
@@ -112,18 +114,13 @@ internal static class ApprovalText
         return string.Join(", ", labels.Distinct());
     }
 
-    private static string? String(JsonElement element, string name)
-        => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
 
     private static string Cut(string text, int length)
     {
         if (text.Length <= length)
             return RelayConsole.SafeLine(text);
 
-        // Half of a character written as a pair would be shown as a broken one.
-        var cut = char.IsHighSurrogate(text[length - 1]) ? length - 1 : length;
+        var cut = RelayConsole.CutAt(text, length);
         return $"{RelayConsole.SafeLine(text[..cut])}[yellow]... ({text.Length - cut} more characters not shown)[/]";
     }
 }

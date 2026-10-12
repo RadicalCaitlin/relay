@@ -5,16 +5,21 @@ using Spectre.Console;
 
 namespace Relay.Cli.Approvals;
 
+/// <summary>A turn of an agent that can ask the user.</summary>
+/// <param name="Agent">The agent's name, as the user is shown it.</param>
+/// <param name="Ended">Cancelled when the turn is over, after which nothing asked in it can be answered.</param>
+internal sealed record AskingTurn(string Agent, CancellationToken Ended);
+
 /// <summary>
 /// Puts what an agent's CLI asks to the user, and turns their answer into what that CLI is told.
 /// Nothing is ever allowed here except by a yes the user typed after the question was shown:
 /// not by an empty line, not by a line typed before it, and not when nobody can be asked.
 /// </summary>
 /// <param name="gate">Held while writing, so a question and a line of activity cannot run into each other.</param>
-/// <param name="runningAgent">The name of the agent whose turn is in progress, or null when none is.</param>
-/// <param name="readAnswer">The next line the user types, or null when the turn ended or was cancelled first.</param>
+/// <param name="runningTurn">The turn in progress of an agent that can ask, or null when there is none.</param>
+/// <param name="readAnswer">The next line the user types, or null when its token was cancelled first.</param>
 /// <param name="discardTypedAhead">Throws away what was typed before the question was shown.</param>
-internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?> runningAgent, Func<string?> readAnswer, Action discardTypedAhead)
+internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingTurn?> runningTurn, Func<CancellationToken, string?> readAnswer, Action discardTypedAhead)
 {
     public const string QuestionTool = "AskUserQuestion";
 
@@ -41,12 +46,16 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
         }
     }
 
-    public string Decide(ApprovalRequest request)
+    /// <param name="askerGone">Cancelled when whoever asked has stopped waiting for the answer.</param>
+    public string Decide(ApprovalRequest request, CancellationToken askerGone)
     {
+        // Taken before waiting for the keyboard. A request belongs to the turn it arrived in, and
+        // by the time an earlier question is answered a later turn may have begun.
+        var turn = runningTurn();
         lock (_asking)
         {
             // A process an agent left behind, or one still closing, has nobody's turn to belong to.
-            if (runningAgent() is not { } agent)
+            if (turn is null || turn.Ended.IsCancellationRequested || askerGone.IsCancellationRequested)
                 return ApprovalBridge.Refusal(NobodyToAsk);
 
             var tool = ApprovalText.Name(request.ToolName);
@@ -56,13 +65,18 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
                 return ApprovalBridge.Refusal(NobodyToAsk);
             }
 
-            return request.ToolName == QuestionTool
-                ? AskQuestions(Markup.Escape(agent), request.Input)
-                : AskPermission(Markup.Escape(agent), tool, request.Input);
+            using var closed = CancellationTokenSource.CreateLinkedTokenSource(turn.Ended, askerGone);
+            var agent = Markup.Escape(turn.Agent);
+            var answer = request.ToolName == QuestionTool
+                ? AskQuestions(agent, request.Input, closed.Token)
+                : AskPermission(agent, tool, request.Input, closed.Token);
+            if (askerGone.IsCancellationRequested && !turn.Ended.IsCancellationRequested)
+                Write($"[yellow]    {agent} stopped waiting for an answer, so nothing was sent.[/]");
+            return answer;
         }
     }
 
-    private string AskPermission(string agent, string tool, JsonElement input)
+    private string AskPermission(string agent, string tool, JsonElement input, CancellationToken closed)
     {
         if (ApprovalText.Describe(input) is not { } lines)
         {
@@ -75,7 +89,7 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
         while (true)
         {
             Write("    Allow it this once? Type [bold]yes[/] or [bold]no[/]. Ctrl+C cancels the turn.");
-            switch (Read()?.ToLowerInvariant())
+            switch (Read(closed)?.ToLowerInvariant())
             {
                 case "y" or "yes":
                     return new JsonObject { ["behavior"] = "allow", ["updatedInput"] = JsonNode.Parse(input.GetRawText()) }.ToJsonString();
@@ -90,7 +104,7 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
         }
     }
 
-    private string AskQuestions(string agent, JsonElement input)
+    private string AskQuestions(string agent, JsonElement input, CancellationToken closed)
     {
         if (ApprovalText.ReadQuestions(input, MaxQuestions, MaxOptions) is not { } questions)
         {
@@ -115,7 +129,7 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
                 Write(options.Count == 0
                     ? "    Type your answer. /skip leaves it unanswered."
                     : $"    Type {(multiple ? "one or more numbers, separated by commas" : "a number")}, or an answer of your own. /skip leaves it unanswered.");
-                switch (Read())
+                switch (Read(closed))
                 {
                     case null or "/skip":
                         return ApprovalBridge.Refusal("The user chose not to answer. Carry on with your best judgement and say what you assumed.");
@@ -137,11 +151,11 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<string?
         return new JsonObject { ["behavior"] = "allow", ["updatedInput"] = updated }.ToJsonString();
     }
 
-    private string? Read()
+    private string? Read(CancellationToken closed)
     {
         lock (gate)
             console.Markup("[bold green]You:[/] ");
-        return readAnswer();
+        return readAnswer(closed);
     }
 
     private void Write(params string[] lines)

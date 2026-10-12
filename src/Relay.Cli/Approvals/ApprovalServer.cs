@@ -1,6 +1,5 @@
 using System.IO.Pipes;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 namespace Relay.Cli.Approvals;
@@ -13,10 +12,13 @@ internal sealed record ApprovalRequest(string ToolName, JsonElement Input);
 /// agent CLI starts connects here once per question. The pipe has a name made up for this run and
 /// can be opened only by the same user.
 /// </summary>
-/// <param name="decide">Given a request, returns the answer for the agent's CLI. Called on a thread of its own, and may wait for the user.</param>
-internal sealed class ApprovalServer(Func<ApprovalRequest, string> decide) : IAsyncDisposable
+/// <param name="decide">
+/// Given a request, returns the answer for the agent's CLI. Called on a thread of its own, and may
+/// wait for the user. Its token is cancelled when whoever asked has stopped waiting for the answer.
+/// </param>
+internal sealed class ApprovalServer(Func<ApprovalRequest, CancellationToken, string> decide) : IAsyncDisposable
 {
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
 
     private readonly CancellationTokenSource _stopping = new();
     private Task? _accepting;
@@ -55,23 +57,39 @@ internal sealed class ApprovalServer(Func<ApprovalRequest, string> decide) : IAs
 
     private async Task AcceptAsync(NamedPipeServerStream first)
     {
-        NamedPipeServerStream? next = first;
+        NamedPipeServerStream? pipe = first;
         while (!_stopping.IsCancellationRequested)
         {
-            var pipe = next ?? Open();
-            next = null;
+            var connected = false;
             try
             {
+                pipe ??= Open();
                 await pipe.WaitForConnectionAsync(_stopping.Token);
+                connected = true;
             }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException)
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or UnauthorizedAccessException)
             {
-                await pipe.DisposeAsync();
-                continue;
             }
 
-            _ = Task.Run(() => ServeAsync(pipe));
+            if (connected)
+            {
+                var accepted = pipe!;
+                _ = Task.Run(() => ServeAsync(accepted));
+            }
+            else
+            {
+                if (pipe is not null)
+                    await pipe.DisposeAsync();
+
+                // A pipe that cannot be opened now may open in a moment. Trying again at once would spin.
+                await Task.Delay(RetryDelay, _stopping.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+
+            pipe = null;
         }
+
+        if (pipe is not null)
+            await pipe.DisposeAsync();
     }
 
     private async Task ServeAsync(NamedPipeServerStream pipe)
@@ -80,22 +98,50 @@ internal sealed class ApprovalServer(Func<ApprovalRequest, string> decide) : IAs
         {
             try
             {
-                using var reader = new StreamReader(pipe, Utf8NoBom, leaveOpen: true);
-                await using var writer = new StreamWriter(pipe, Utf8NoBom, leaveOpen: true) { NewLine = "\n" };
+                using var reader = new StreamReader(pipe, ApprovalBridge.Utf8NoBom, leaveOpen: true);
+                await using var writer = new StreamWriter(pipe, ApprovalBridge.Utf8NoBom, leaveOpen: true) { NewLine = "\n" };
                 if (await reader.ReadLineAsync(_stopping.Token) is not { } line)
                     return;
 
-                var answer = TryRead(line, out var request)
-                    ? decide(request)
-                    : ApprovalBridge.Refusal("Relay could not read what was asked, so this was refused.");
-                await writer.WriteLineAsync(answer);
-                await writer.FlushAsync();
+                if (!TryRead(line, out var request))
+                {
+                    await writer.WriteLineAsync(ApprovalBridge.Refusal("Relay could not read what was asked, so this was refused."));
+                    return;
+                }
+
+                using var gone = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+                var watching = WatchAsync(pipe, gone);
+                try
+                {
+                    await writer.WriteLineAsync(decide(request, gone.Token));
+                    await writer.FlushAsync();
+                }
+                finally
+                {
+                    await gone.CancelAsync();
+                    await watching;
+                }
             }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
             {
                 // The agent's CLI went away, or Relay is closing. Nobody is left to tell.
             }
         }
+    }
+
+    // Whoever asked sends one line and then only waits. A read that ends before the answer is
+    // written means they have gone, and the user must not be left answering nobody.
+    private static async Task WatchAsync(NamedPipeServerStream pipe, CancellationTokenSource gone)
+    {
+        try
+        {
+            _ = await pipe.ReadAsync(new byte[1], gone.Token);
+        }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
+        {
+        }
+
+        await gone.CancelAsync();
     }
 
     private static bool TryRead(string line, out ApprovalRequest request)

@@ -69,7 +69,13 @@ answers for the user, and an agent that cannot ask is run as before.**
   user's own answer. `/skip` leaves the questions unanswered, and the agent is told so.
 - **A question belongs to a turn.** It is asked only while the agent that can ask is running. When
   that turn ends or is cancelled, the question is withdrawn and the next line typed is for the
-  room. A request that arrives outside a turn, from a process an agent left behind, is refused.
+  room. A request that arrives outside a turn, from a process an agent left behind, is refused,
+  and so is one that was still waiting for the keyboard when its turn ended.
+- **A question nobody is waiting on is withdrawn too.** When the CLI withdraws its call, or the
+  program it started goes away, the pipe closes and the question is taken back and said to be.
+- **A line typed across a withdrawal goes nowhere.** A read of the console cannot be abandoned, so
+  the line the user was typing when a question was withdrawn may have been meant as its answer.
+  It is not sent to the room or to another question: the user is told so and asked again.
 - **`/approvals off`** refuses everything without asking, for when the user is not watching.
   `/approvals on` is the default in a terminal. Like `/pause`, it is set and never toggled.
 - **Codex is unchanged**, and Relay says so: `/approvals` and the header name which agents ask

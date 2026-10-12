@@ -41,10 +41,12 @@ internal sealed class StartCommand(
     private bool _pause;
     private Task<string?>? _read;
     private bool _readInterrupted;
+    private bool _readWithdrawn;
     private ApprovalDesk? _desk;
     private string? _noApprovals = NoTerminal;
+    private string? _approvalFolder;
     private CancellationTokenSource? _question;
-    private volatile string? _asking;
+    private volatile AskingTurn? _asking;
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
@@ -54,43 +56,42 @@ internal sealed class StartCommand(
         // Without a person who can both see a question and answer it, nothing is put to anyone,
         // and an agent's CLI refuses what its own settings do not allow, as it always has.
         ApprovalServer? approvals = null;
-        string? approvalFolder = null;
-        if (!streams.IsInputRedirected && !streams.IsOutputRedirected && console.Profile.Capabilities.Interactive)
-        {
-            approvalFolder = Directory.CreateTempSubdirectory("relay-approval-").FullName;
-            if (approvalFolder.IndexOfAny(UnsafeOnCommandLine) >= 0)
-            {
-                _noApprovals = "the path of your temporary folder has a character in it that is not safe on a command line";
-            }
-            else
-            {
-                var desk = new ApprovalDesk(console, _writing, () => _asking, ReadAnswer, DiscardTypedAhead);
-                var server = new ApprovalServer(desk.Decide);
-                try
-                {
-                    server.Start();
-                    _desk = desk;
-                    approvals = server;
-                    _noApprovals = null;
-                }
-                catch (IOException ex)
-                {
-                    _noApprovals = $"the pipe Relay needs for it could not be opened ({RelayConsole.SafeLine(ex.Message)})";
-                }
-            }
-        }
-
-        var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted,
-            approvals is null ? null : ApprovalToolFor(approvals.PipeName, approvalFolder!));
         var room = rooms.CreateRoom("general");
-        foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
-            room.AddParticipant(AgentParticipant.Create(agent, options));
-
         Console.CancelKeyPress += OnCancelKeyPress;
         using var terminated = PosixSignalRegistration.Create(PosixSignal.SIGTERM, OnTerminating);
         using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, OnTerminating);
         try
         {
+            if (!streams.IsInputRedirected && !streams.IsOutputRedirected && console.Profile.Capabilities.Interactive)
+            {
+                var folder = _approvalFolder = Directory.CreateTempSubdirectory("relay-approval-").FullName;
+                if (folder.IndexOfAny(UnsafeOnCommandLine) >= 0)
+                {
+                    _noApprovals = "the path of your temporary folder has a character in it that is not safe on a command line";
+                }
+                else
+                {
+                    var desk = new ApprovalDesk(console, _writing, () => _asking, ReadAnswer, DiscardTypedAhead);
+                    var server = new ApprovalServer(desk.Decide);
+                    try
+                    {
+                        server.Start();
+                        _desk = desk;
+                        approvals = server;
+                        _noApprovals = null;
+                    }
+                    catch (IOException ex)
+                    {
+                        _noApprovals = $"the pipe Relay needs for it could not be opened ({RelayConsole.SafeLine(ex.Message)})";
+                    }
+                }
+            }
+
+            var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted,
+                approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!));
+            foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
+                room.AddParticipant(AgentParticipant.Create(agent, options));
+
             WriteHeader(room);
             await RunLoopAsync(room, cancellationToken);
         }
@@ -105,8 +106,7 @@ internal sealed class StartCommand(
 
             if (approvals is not null)
                 await approvals.DisposeAsync();
-            if (approvalFolder is not null)
-                Directory.Delete(approvalFolder, recursive: true);
+            RemoveApprovalFolder();
         }
 
         return 0;
@@ -114,6 +114,22 @@ internal sealed class StartCommand(
 
     // Relay itself, run again as the program an agent's CLI starts in order to ask. Under "dotnet
     // relay.dll" the process is dotnet, so the assembly has to be named as well.
+    // Called on every way out, including the ones that end the process without unwinding it.
+    private void RemoveApprovalFolder()
+    {
+        if (Interlocked.Exchange(ref _approvalFolder, null) is not { } folder)
+            return;
+
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Relay is leaving either way, and the system clears its temporary folder in time.
+        }
+    }
+
     private static ApprovalTool ApprovalToolFor(string pipeName, string folder)
     {
         var host = Environment.ProcessPath!;
@@ -237,7 +253,7 @@ internal sealed class StartCommand(
                     if (starting.Agent.AsksForApproval)
                     {
                         _question = CancellationTokenSource.CreateLinkedTokenSource(turn.Token);
-                        _asking = starting.Agent.DisplayName;
+                        _asking = new(starting.Agent.DisplayName, _question.Token);
                     }
 
                     var name = Markup.Escape(starting.Agent.DisplayName);
@@ -284,17 +300,17 @@ internal sealed class StartCommand(
         question?.Dispose();
     }
 
-    private string? ReadAnswer()
+    private string? ReadAnswer(CancellationToken closed)
     {
-        if (_question is not { } question)
-            return null;
-
         try
         {
-            return ReadLine(question.Token);
+            return ReadLine(closed);
         }
         catch (OperationCanceledException)
         {
+            // The read goes on, and what it returns was typed, at least in part, as an answer to
+            // this question. It must not become a message for the room or an answer to another.
+            _readWithdrawn = true;
             lock (_writing)
                 console.WriteLine();
             return null;
@@ -309,6 +325,7 @@ internal sealed class StartCommand(
         {
             _read = null;
             _readInterrupted = false;
+            _readWithdrawn = false;
         }
 
         if (_read is null)
@@ -332,7 +349,8 @@ internal sealed class StartCommand(
     }
 
     // A read of the console cannot be abandoned. One that was interrupted is kept, and the line it
-    // eventually returns answers the next prompt instead of being lost.
+    // eventually returns answers the next prompt instead of being lost. The exception is a read
+    // begun for a question that has been withdrawn: its line is said not to have gone anywhere.
     /// <exception cref="OperationCanceledException">Cancelled while waiting for a line.</exception>
     private string? ReadLine(CancellationToken cancellationToken = default)
     {
@@ -351,13 +369,26 @@ internal sealed class StartCommand(
 
             _read = null;
             var interrupted = _readInterrupted;
+            var withdrawn = _readWithdrawn;
             _readInterrupted = false;
+            _readWithdrawn = false;
 
             // On Windows, Ctrl+C makes the read in progress return as if input had ended. After an
             // interrupted read that is not the end of input, so read again.
             var line = read.Result;
             if (line is null && interrupted)
                 continue;
+
+            if (withdrawn && !string.IsNullOrWhiteSpace(line))
+            {
+                lock (_writing)
+                {
+                    console.MarkupLine("[yellow]The question was withdrawn while that line was being typed, so it was not sent to anyone. Type it again if you still mean it.[/]");
+                    console.Markup("[bold green]You:[/] ");
+                }
+
+                continue;
+            }
 
             return line?.Trim();
         }
@@ -523,7 +554,11 @@ internal sealed class StartCommand(
 
     // Ctrl+C cancels the request in flight; with nothing in flight it exits as usual.
     private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
-        => e.Cancel = CancelTurn();
+    {
+        e.Cancel = CancelTurn();
+        if (!e.Cancel)
+            RemoveApprovalFolder();
+    }
 
     // Relay is being closed (terminal closed, kill, logoff). The agent CLI would otherwise outlive it, so
     // stop the request in flight and hold the shutdown until its process tree is gone. The signal is not
@@ -532,6 +567,7 @@ internal sealed class StartCommand(
     {
         if (CancelTurn())
             _idle.Wait(ShutdownGrace);
+        RemoveApprovalFolder();
     }
 
     private bool CancelTurn()

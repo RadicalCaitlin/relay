@@ -35,7 +35,7 @@ public sealed class ClaudeApprovalLiveTests : IDisposable
     {
         List<string> asked = [];
         var allow = false;
-        await using var server = new ApprovalServer(request =>
+        await using var server = new ApprovalServer((request, _) =>
         {
             lock (asked)
                 asked.Add(request.ToolName);
