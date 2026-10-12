@@ -225,7 +225,12 @@ internal sealed class RelayHarness : IDisposable
     private void Stop()
     {
         if (_relay is { HasExited: false })
+        {
             _relay.Kill(entireProcessTree: true);
+            // Killing does not wait, and on Windows a process that is still going holds its working
+            // directory, which is the folder about to be deleted.
+            _relay.WaitForExit(TimeSpan.FromSeconds(30));
+        }
         _relay?.Dispose();
         _relay = null;
     }
