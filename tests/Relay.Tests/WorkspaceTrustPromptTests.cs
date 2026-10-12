@@ -27,7 +27,12 @@ public sealed class WorkspaceTrustPromptTests : IDisposable
 
     public void Dispose() => Directory.Delete(_directory, recursive: true);
 
-    private sealed record Streams(bool IsInputRedirected, bool IsOutputRedirected) : IConsoleStreams;
+    private sealed record Streams(bool IsInputRedirected, bool IsOutputRedirected) : IConsoleStreams
+    {
+        public void DiscardPendingInput()
+        {
+        }
+    }
 
     private static TestConsole Terminal(string answer)
     {

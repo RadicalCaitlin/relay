@@ -76,6 +76,7 @@ Inside the chatroom:
 | `/reset`            | Start a new conversation with every agent from a clean slate |
 | `/reset <agent>`    | The same for one agent: it is shown nothing said before the reset |
 | `/pause on`, `/pause off` | Pause mode: ask before one agent's message is passed to another. `/pause` alone shows which it is |
+| `/approvals on`, `/approvals off` | Be asked before a step an agent's own settings do not allow. `/approvals` alone shows which it is |
 | `/role`             | Show each agent's role and the roles available     |
 | `/role <agent> <role>` | Give an agent a role: `implementer`, `reviewer`, `architect` or `coordinator` |
 | `/role <agent> <name>: <description>` | Give an agent a role of your own       |
@@ -166,19 +167,52 @@ Waiting for Claude... (Ctrl+C to cancel)
   - Looking at how uploads are sent today.
   - Read: src/Uploader.cs
   - Write: src/Retry.cs
-  ! Write was not allowed: Claude requested permissions to write to src/Retry.cs, but you haven't granted it yet.
+  ! Write was refused without asking you: approvals are off. /approvals on turns them on.
   - PowerShell: dotnet test
 Claude: I could not add src/Retry.cs: writing files needs your approval.
 ```
 
 - A line starting with `-` is something the agent said along the way, or a step it took: a file it
   read or changed, a command it ran.
-- A line starting with `!` is a step that was refused or that failed. Relay cannot approve it for
-  you; allow it in the agent's own configuration if you want it to work next time.
+- A line starting with `!` is a step that was refused or that failed. With approvals on, in a
+  terminal, Claude asks you first instead (see "Approving a step").
 - These lines are only for you. They are not part of the room: `/history` does not show them and
   no other agent sees them.
 - Claude's own reasoning is not shown, because Claude Code does not make it available. Codex
   reports what it says and the commands it runs.
+
+### Approving a step
+
+Each agent is limited by its own settings. When Claude wants to take a step those settings do not
+allow, Relay asks you, and the step happens only if you type `yes`:
+
+```
+You: @claude save the date to today.txt
+Waiting for Claude... (Ctrl+C to cancel)
+  - PowerShell: Get-Date | Out-File today.txt
+  ? Claude wants to use PowerShell:
+      command: Get-Date | Out-File today.txt
+      description: Save the date to today.txt
+    Allow it this once? Type yes or no. Ctrl+C cancels the turn.
+You: yes
+Claude: Saved the date to today.txt.
+```
+
+- **A yes is for that one step.** Relay does not remember it and never changes an agent's
+  settings. To stop being asked about something, allow it in the agent's own settings.
+- **Only `yes` or `y` allows.** `no` refuses, and Claude is told. An empty line, or anything else,
+  is asked again and is not sent to anyone.
+- **Read the command, not the description.** The description is the agent's own. A command is
+  always shown in full; a longer value, such as a file's content, is cut short and says so.
+- **Claude can also ask you a question**, with options to pick by number or an answer of your own.
+  `/skip` leaves it unanswered.
+- **Your answers are for that agent only.** They are not part of the room.
+- **`/approvals off`** refuses every such step without asking, for when you are not watching.
+  A turn otherwise waits for your answer for as long as you take.
+- **Only in a terminal, and only Claude.** With input or output redirected nobody is asked and
+  the step is refused, as before. Codex cannot ask: a step its own settings do not allow fails.
+
+See [docs/adr/0005-approvals.md](docs/adr/0005-approvals.md) for the design.
 
 See [docs/adr/0004-agent-activity.md](docs/adr/0004-agent-activity.md) for the design.
 
@@ -207,7 +241,7 @@ See [docs/threat-model.md](docs/threat-model.md) for the full security model and
 
 | Agent        | Discovery | Chat | How Relay talks to it                                                  |
 | ------------ | --------- | ---- | ---------------------------------------------------------------------- |
-| Claude Code  | yes       | yes  | `claude -p --output-format stream-json --verbose`, continued with `--resume <id>` |
+| Claude Code  | yes       | yes  | `claude -p --output-format stream-json --verbose`, continued with `--resume <id>`. In a terminal, also `--mcp-config <file> --permission-prompt-tool <tool>`, so it can ask you |
 | OpenAI Codex | yes       | yes  | `codex exec --json -`, continued with `codex exec resume <id> --json -` |
 
 Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.0 on Windows.
@@ -220,10 +254,9 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
   See the threat model.
 - A reply arrives whole when the agent finishes. While you wait, Relay shows what the agent is
   doing (see "Watching an agent work"), but not the reply as it is written.
-- Agents cannot answer permission prompts through Relay. Tool use that would need approval is
-  declined by the agent CLI, so agents are effectively limited to what their own configuration
-  already allows. Relay shows you when Claude is refused something; Codex does not report a
-  refusal as such. Codex also refuses to run outside a Git repository.
+- Only Claude can ask you before a step its own settings do not allow, and only when Relay runs
+  in a terminal (see "Approving a step"). Codex cannot: such a step fails, and Codex does not
+  report it as a refusal. Codex also refuses to run outside a Git repository.
 - An agent's turn has no time limit. If an agent hangs, press `Ctrl+C` to cancel the request.
 - You cannot type while an agent is working, so an exchange can only be interrupted with `Ctrl+C`
   or, in pause mode, between turns.
@@ -233,7 +266,6 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 ## Near-term roadmap
 
 - Streaming the reply itself as it is written
-- Letting the human answer an agent's permission prompts
 - Multiple rooms and persisted history
 - Packaging as a .NET global tool and native executables
 

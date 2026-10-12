@@ -33,6 +33,13 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     /// </summary>
     public virtual IEnumerable<AgentActivity> ParseActivity(string line) => [];
 
+    public virtual bool CanAskForApproval => false;
+
+    /// <summary>Called once before a session's first turn, for anything the CLI needs on disk.</summary>
+    protected virtual void Prepare(AgentSessionOptions options)
+    {
+    }
+
     public async Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default)
     {
         if (locator.Find(Command) is not { } path)
@@ -46,6 +53,7 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
     {
         if (discovery.ExecutablePath is not { } path)
             throw new InvalidOperationException($"{DisplayName} is not installed.");
+        Prepare(options);
         return new CliAgentSession(runner, path, options.WorkingDirectory, sessionId => BuildArguments(sessionId, options), ParseReply, ParseActivity);
     }
 

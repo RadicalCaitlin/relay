@@ -117,6 +117,19 @@ public class CliAgentTests
         {
             foreach (var argument in provider.BuildArguments(sessionId, options))
                 Assert.DoesNotContain(forbidden, word => argument.Contains(word, StringComparison.OrdinalIgnoreCase));
+
+            // With somebody to ask, the only additions are the two that say where to ask. Naming a tool
+            // that asks the user approves nothing, and nothing else that mentions permissions comes with it.
+            var tool = new ApprovalTool("/opt/relay/relay", ["approval-tool", "pipe"], "/tmp/relay-approval-test");
+            var asking = provider.BuildArguments(sessionId, options with { ApprovalTool = tool }).ToList();
+            if (asking.IndexOf("--permission-prompt-tool") is var at and >= 0)
+            {
+                Assert.Equal(ClaudeProvider.PermissionPromptTool, asking[at + 1]);
+                asking.RemoveRange(at, 2);
+                asking.RemoveRange(asking.IndexOf("--mcp-config"), 2);
+            }
+
+            Assert.Equal(provider.BuildArguments(sessionId, options), asking);
         }
     }
 

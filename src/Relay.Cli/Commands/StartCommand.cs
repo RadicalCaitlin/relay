@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Relay.Cli.Approvals;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
@@ -27,18 +28,43 @@ internal sealed class StartCommand(
     // Windows allows about five seconds between a console-close notification and termination.
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(4);
 
+    // Characters cmd.exe gives a meaning to even inside quotes. The agent CLIs are cmd.exe shims on
+    // Windows, and the folder below is named on their command line.
+    private static readonly char[] UnsafeOnCommandLine = ['%', '!', '^', '&', '|', '<', '>', '"'];
+
     private readonly ManualResetEventSlim _idle = new(initialState: true);
+    private readonly Lock _writing = new();
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
     private bool _pause;
     private Task<string?>? _read;
     private bool _readInterrupted;
+    private ApprovalDesk? _desk;
+    private CancellationTokenSource? _question;
+    private volatile string? _asking;
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         var trust = trustPrompt.Resolve(settings.TrustWorkspace, Environment.CurrentDirectory);
         _folderStatus = trust.Status;
-        var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted);
+
+        // Without a person who can both see a question and answer it, nothing is put to anyone,
+        // and an agent's CLI refuses what its own settings do not allow, as it always has.
+        ApprovalServer? approvals = null;
+        string? approvalFolder = null;
+        if (!streams.IsInputRedirected && !streams.IsOutputRedirected && console.Profile.Capabilities.Interactive)
+        {
+            approvalFolder = Directory.CreateTempSubdirectory("relay-approval-").FullName;
+            if (approvalFolder.IndexOfAny(UnsafeOnCommandLine) < 0)
+            {
+                _desk = new ApprovalDesk(console, _writing, () => _asking, ReadAnswer, DiscardTypedAhead);
+                approvals = new ApprovalServer(_desk.Decide);
+                approvals.Start();
+            }
+        }
+
+        var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted,
+            approvals is null ? null : ApprovalToolFor(approvals.PipeName, approvalFolder!));
         var room = rooms.CreateRoom("general");
         foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
             room.AddParticipant(AgentParticipant.Create(agent, options));
@@ -59,9 +85,25 @@ internal sealed class StartCommand(
                 if (participant.Session is { } session)
                     await session.DisposeAsync();
             }
+
+            if (approvals is not null)
+                await approvals.DisposeAsync();
+            if (approvalFolder is not null)
+                Directory.Delete(approvalFolder, recursive: true);
         }
 
         return 0;
+    }
+
+    // Relay itself, run again as the program an agent's CLI starts in order to ask. Under "dotnet
+    // relay.dll" the process is dotnet, so the assembly has to be named as well.
+    private static ApprovalTool ApprovalToolFor(string pipeName, string folder)
+    {
+        var host = Environment.ProcessPath!;
+        IReadOnlyList<string> arguments = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            ? [typeof(StartCommand).Assembly.Location, ApprovalBridge.Command, pipeName]
+            : [ApprovalBridge.Command, pipeName];
+        return new ApprovalTool(host, arguments, folder);
     }
 
     private async Task RunLoopAsync(ChatRoom room, CancellationToken cancellationToken)
@@ -116,6 +158,24 @@ internal sealed class StartCommand(
                 case var command when command.StartsWith("/pause "):
                     console.MarkupLine($"[yellow]Pause mode is still {(_pause ? "on" : "off")}. Use /pause on or /pause off.[/]");
                     break;
+                // Never a toggle either, for the same reason.
+                case "/approvals":
+                    console.MarkupLine($"[dim]{DescribeApprovals(room)}{(_desk is null ? string.Empty : " Use /approvals on or /approvals off.")}[/]");
+                    break;
+                case "/approvals on" or "/approvals off" when _desk is null:
+                    console.MarkupLine($"[yellow]{DescribeApprovals(room)}[/]");
+                    break;
+                case "/approvals on":
+                    _desk!.Enabled = true;
+                    console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
+                    break;
+                case "/approvals off":
+                    _desk!.Enabled = false;
+                    console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
+                    break;
+                case var command when command.StartsWith("/approvals "):
+                    console.MarkupLine($"[yellow]{DescribeApprovals(room)} Use /approvals on or /approvals off.[/]");
+                    break;
                 case "/role":
                     WriteRoles(room);
                     break;
@@ -156,6 +216,13 @@ internal sealed class StartCommand(
                 TurnStarting = starting =>
                 {
                     recipient = starting.Agent;
+                    StopAsking();
+                    if (starting.Agent.AsksForApproval)
+                    {
+                        _question = CancellationTokenSource.CreateLinkedTokenSource(turn.Token);
+                        _asking = starting.Agent.DisplayName;
+                    }
+
                     var name = Markup.Escape(starting.Agent.DisplayName);
                     console.MarkupLine(starting.TurnLimit > 1
                         ? $"[dim]Waiting for {name}... (turn {starting.Turn} of {starting.TurnLimit}, Ctrl+C to stop the exchange)[/]"
@@ -163,7 +230,13 @@ internal sealed class StartCommand(
                 },
                 Activity = (_, activity) => WriteActivity(activity),
                 Recorded = message => WriteMessage(room, message),
-                Pause = _pause ? (handover, addressee) => AskAboutHandover(room, handover, addressee, turn.Token) : null,
+                Pause = _pause
+                    ? (handover, addressee) =>
+                    {
+                        StopAsking();
+                        return AskAboutHandover(room, handover, addressee, turn.Token);
+                    }
+                    : null,
             };
 
             // One token for the whole exchange, so Ctrl+C between two agents' turns still stops it.
@@ -177,9 +250,68 @@ internal sealed class StartCommand(
         }
         finally
         {
+            StopAsking();
             _turn = null;
             _idle.Set();
         }
+    }
+
+    // The turn a question belonged to is over: it can no longer be answered, and whatever is
+    // typed next is for the room. Returns once the question has let go of the keyboard.
+    private void StopAsking()
+    {
+        _asking = null;
+        var question = Interlocked.Exchange(ref _question, null);
+        question?.Cancel();
+        _desk?.WaitUntilIdle();
+        question?.Dispose();
+    }
+
+    private string? ReadAnswer()
+    {
+        if (_question is not { } question)
+            return null;
+
+        try
+        {
+            return ReadLine(question.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            lock (_writing)
+                console.WriteLine();
+            return null;
+        }
+    }
+
+    // A key pressed before a question was shown must not answer it. A line left over from a read
+    // that was interrupted is dropped, and so is anything typed that no read has taken yet.
+    private void DiscardTypedAhead()
+    {
+        if (_read is { IsCompleted: true })
+        {
+            _read = null;
+            _readInterrupted = false;
+        }
+
+        if (_read is null)
+            streams.DiscardPendingInput();
+    }
+
+    private string DescribeApprovals(ChatRoom room)
+    {
+        if (_desk is null)
+            return "Approvals are not available: Relay asks you only when it is run in a terminal, so a step an agent's own settings do not allow is refused.";
+        if (!_desk.Enabled)
+            return "Approvals are off: nothing is put to you, and a step an agent's own settings do not allow is refused.";
+
+        var connected = room.Participants.Where(p => p.Session is not null).ToList();
+        var asking = string.Join(" and ", connected.Where(p => p.AsksForApproval).Select(p => Markup.Escape(p.DisplayName)));
+        var silent = string.Join(" and ", connected.Where(p => !p.AsksForApproval).Select(p => Markup.Escape(p.DisplayName)));
+        var asks = asking.Length > 0
+            ? $"Approvals are on: {asking} asks you before a step its own settings do not allow, and can ask you questions."
+            : "Approvals are on, but no agent here can ask.";
+        return silent.Length > 0 ? $"{asks} {silent} cannot ask: a step its own settings do not allow is refused." : asks;
     }
 
     // A read of the console cannot be abandoned. One that was interrupted is kept, and the line it
@@ -409,6 +541,8 @@ internal sealed class StartCommand(
 
         console.WriteLine();
         console.MarkupLine(_folderStatus);
+        if (_desk is not null)
+            console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
     }
@@ -422,6 +556,7 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/restart[/]   Start new agent conversations, keeping what was said in the room (/restart <agent> for one)");
         console.MarkupLine("[bold]/reset[/]     Start new agent conversations from a clean slate (/reset <agent> for one)");
         console.MarkupLine($"[bold]/pause[/]     Ask before one agent's message is passed to another: /pause on or /pause off (now {(_pause ? "on" : "off")})");
+        console.MarkupLine($"[bold]/approvals[/] Be asked before a step an agent's own settings do not allow: /approvals on or /approvals off (now {(_desk is null ? "not available" : _desk.Enabled ? "on" : "off")})");
         console.MarkupLine("[bold]/role[/]      Show each agent's role; /role <agent> <role> gives one, /role <agent> <name>: <description> one of your own, /role <agent> none removes it");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)
@@ -436,7 +571,8 @@ internal sealed class StartCommand(
     private void WriteActivity(AgentActivity activity)
     {
         var text = RelayConsole.ActivityLine(activity.Text, Environment.CurrentDirectory);
-        console.MarkupLine(activity.Kind == AgentActivityKind.Problem ? $"[yellow]  ! {text}[/]" : $"[dim]  - {text}[/]");
+        lock (_writing)
+            console.MarkupLine(activity.Kind == AgentActivityKind.Problem ? $"[yellow]  ! {text}[/]" : $"[dim]  - {text}[/]");
     }
 
     private void WriteMessage(ChatRoom room, ChatMessage message, bool includeHuman = false)

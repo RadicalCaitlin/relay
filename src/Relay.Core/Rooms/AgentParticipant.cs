@@ -7,7 +7,8 @@ public sealed class AgentParticipant(
     string id,
     string displayName,
     IAgentSession? session,
-    string? unavailableReason = null)
+    string? unavailableReason = null,
+    bool asksForApproval = false)
 {
     public string Id { get; } = id;
 
@@ -17,6 +18,9 @@ public sealed class AgentParticipant(
     public IAgentSession? Session { get; } = session;
 
     public string? UnavailableReason { get; } = unavailableReason;
+
+    /// <summary>Whether this agent asks the user before a step its own settings do not allow.</summary>
+    public bool AsksForApproval { get; } = asksForApproval;
 
     public AgentSessionState State => Session?.State ?? AgentSessionState.Unavailable;
 
@@ -36,7 +40,7 @@ public sealed class AgentParticipant(
     {
         var (provider, result) = agent;
         return result.IsInstalled
-            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, options))
+            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, options), asksForApproval: provider.CanAskForApproval && options.ApprovalTool is not null)
             : new(provider.Id, provider.DisplayName, session: null, result.Detail ?? "not installed");
     }
 }
