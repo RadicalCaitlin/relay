@@ -11,6 +11,12 @@ internal interface IConsoleStreams
     bool IsInputRedirected { get; }
 
     bool IsOutputRedirected { get; }
+
+    /// <summary>Throws away keys already pressed and not yet read, so they cannot answer a question asked after them.</summary>
+    void DiscardPendingInput();
+
+    /// <summary>The next line typed, or null at the end of input. Blocks, and cannot be abandoned once begun.</summary>
+    string? ReadLine();
 }
 
 internal sealed class ConsoleStreams : IConsoleStreams
@@ -18,4 +24,16 @@ internal sealed class ConsoleStreams : IConsoleStreams
     public bool IsInputRedirected => Console.IsInputRedirected;
 
     public bool IsOutputRedirected => Console.IsOutputRedirected;
+
+    public void DiscardPendingInput()
+    {
+        // With input from a file or a pipe there are no keys to look for, and looking throws.
+        if (Console.IsInputRedirected)
+            return;
+
+        while (Console.KeyAvailable)
+            Console.ReadKey(intercept: true);
+    }
+
+    public string? ReadLine() => Console.ReadLine();
 }

@@ -32,10 +32,12 @@ internal static class RelayConsole
         if (line.Length <= maxLength)
             return SafeLine(line);
 
-        // Half of a character written as a pair would be shown as a broken one.
-        var cut = char.IsHighSurrogate(line[maxLength - 1]) ? maxLength - 1 : maxLength;
-        return SafeLine(line[..cut] + "...");
+        return SafeLine(line[..CutAt(line, maxLength)] + "...");
     }
+
+    /// <summary>Where to cut text longer than <paramref name="maxLength"/>: half of a character written as a pair would be shown as a broken one.</summary>
+    public static int CutAt(string text, int maxLength)
+        => char.IsHighSurrogate(text[maxLength - 1]) ? maxLength - 1 : maxLength;
 
     // Removes the folder only where a path starts with it. Inside a longer path the same text is
     // some other folder: in /app, /usr/share/app/config.yml is not under the working folder.

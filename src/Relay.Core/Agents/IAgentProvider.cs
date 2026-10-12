@@ -11,6 +11,13 @@ public interface IAgentProvider
     Task<AgentDiscoveryResult> DiscoverAsync(bool includeVersion = false, CancellationToken cancellationToken = default);
 
     IAgentSession CreateSession(AgentDiscoveryResult discovery, AgentSessionOptions options);
+
+    /// <summary>
+    /// Whether this agent can put a step it is not allowed to take, or a question of its own, to the
+    /// user through <see cref="AgentSessionOptions.ApprovalTool"/>. An agent that cannot is refused
+    /// such a step by its own CLI, as before.
+    /// </summary>
+    bool CanAskForApproval => false;
 }
 
 /// <param name="WorkingDirectory">The directory the agent runs in.</param>
@@ -18,7 +25,28 @@ public interface IAgentProvider
 /// Whether the user has said they trust <paramref name="WorkingDirectory"/>. When false, a provider must not
 /// let content in that directory configure the agent or run commands on its behalf.
 /// </param>
-public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false);
+/// <param name="ApprovalTool">
+/// How an agent can ask the user before a step its own settings do not allow. Null when nobody can
+/// be asked, and the agent's CLI then refuses such a step itself.
+/// </param>
+public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false, ApprovalTool? ApprovalTool = null);
+
+/// <summary>
+/// A program that speaks the Model Context Protocol over its standard streams and offers one tool,
+/// <see cref="ToolName"/>, which asks the user and returns their answer. Relay never answers for them.
+/// </summary>
+/// <param name="Command">The program to start. An absolute path.</param>
+/// <param name="Arguments">Its arguments.</param>
+/// <param name="Directory">
+/// A folder of Relay's own, outside the working directory, where a provider writes whatever its
+/// CLI needs in order to find the tool.
+/// </param>
+public sealed record ApprovalTool(string Command, IReadOnlyList<string> Arguments, string Directory)
+{
+    public const string ServerName = "relay_approval";
+
+    public const string ToolName = "ask";
+}
 
 public sealed record AgentDiscoveryResult(
     string ProviderId,

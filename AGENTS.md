@@ -121,6 +121,15 @@ The build must stay free of warnings and the tests must pass before a change is 
   marked `[LiveCodexFact]` and skipped unless `RELAY_LIVE_CODEX=1`. It gives Codex a throwaway
   `CODEX_HOME`, no credentials and no reachable model, and plants only commands that write a marker
   file. Keep all of that true, and run it when Codex is upgraded or its arguments change.
+- `ClaudeApprovalLiveTests` is the other exception: it runs the installed Claude Code through
+  Relay's approval tool, and is the evidence for what ADR 0005 says Claude Code does. It is marked
+  `[LiveClaudeFact]` and skipped unless `RELAY_LIVE_CLAUDE=1`. It uses the account Claude Code is
+  signed in to, for two short turns. Run it when Claude Code is upgraded or its arguments change.
+- `ApprovalTests` asks the questions in process, through `ApprovalDesk`, for the same reason the
+  folder-trust question is: with redirected streams Relay asks nobody.
+- `StartCommandApprovalTests` runs the chatroom itself in process, with a fake `IConsoleStreams`
+  as the keyboard and an agent that asks over the real pipe. Use it for what depends on when a
+  line is typed, or on how Relay leaves.
 
 ## Adding an agent provider
 
@@ -198,7 +207,26 @@ and update it in the same change.
 - Pause mode is set with `/pause on` and `/pause off`, never toggled. At a pause, a line that looks
   like a command or is addressed to another agent is asked again, never sent to an agent.
 - Read the console through `StartCommand.ReadLine`, which keeps a read that was interrupted. A
-  second `Console.ReadLine` would lose the next line typed to the abandoned one.
+  second `Console.ReadLine` would lose the next line typed to the abandoned one. The line of a read
+  begun for a question that was then withdrawn is never passed on: the user is told and asked again.
+- Relay never answers for the user. A step an agent may not take is put to them only through
+  `ApprovalDesk`, and is allowed only by a `yes` typed after the question was shown: never by an
+  empty line, a line typed earlier, a default, a timeout or a setting. See
+  `docs/adr/0005-approvals.md`.
+- An answer covers the one step shown. Never remember it, never write a permission rule, and never
+  pass on a CLI's suggestion to do so.
+- Before the user is asked, show them what would run, not the agent's description of it. A command
+  is shown whole or the step is refused without asking. Anything else that is cut short says how
+  much is missing. Every line of it goes through `ApprovalText`, behind Relay's own indent.
+- A request is answered only in the turn it arrived in, and only while whoever asked is still
+  waiting. `ApprovalDesk.Decide` refuses it otherwise, without asking.
+- Offer an agent the approval tool only when somebody can be asked: input and output are not
+  redirected and the console can interact. Otherwise pass nothing, and its CLI refuses the step.
+- `relay approval-tool` writes nothing to its standard output but the protocol, and decides
+  nothing. If it cannot reach the chatroom, the answer is no.
+- The file that tells an agent's CLI where to find the tool is written in a folder Relay creates
+  outside the working directory. Its path goes on a command line, so a path holding a character
+  `cmd.exe` gives meaning to inside quotes is not used.
 - Everything an agent is sent goes through `SharedContext.Compose`. Any text that did not come from
   the user's current message must sit inside the transcript, escaped, with its author named. Never
   place another participant's words where they could read as the user's or as Relay's.

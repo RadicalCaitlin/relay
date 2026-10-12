@@ -103,8 +103,10 @@ exercised. Codex documents both as loaded only from a trusted folder.
 
 - Relay never passes a flag that approves tool use, skips permission checks, or changes
   sandboxing. A test asserts this for every provider, with and without workspace trust.
-- Relay cannot answer a permission prompt. Anything an agent would need approval for is declined
-  by the agent CLI, so agents are limited to what your own configuration already allows.
+- Relay never answers a permission prompt itself. In a terminal, a step Claude's own settings do
+  not allow is put to you, and happens only if you type yes; see "Approvals". Everywhere else, and
+  for Codex always, such a step is declined by the agent CLI, so an agent is limited to what your
+  own configuration already allows.
 - `--setting-sources user` only narrows what Claude loads. It grants nothing.
 - An agent can start another agent's turn only inside an exchange you opened; see the next section.
   Outside one, only text you type starts a turn. `/commands` are only ever read from your input: an
@@ -231,6 +233,39 @@ is, and a command or a file name in it may come from something the agent read.
 - **Getting it changes no permission.** Claude Code is asked for its step-by-step output format in
   place of its single result. That adds no flag that approves tool use or loads anything more.
 
+## Approvals
+
+When Relay runs in a terminal, Claude Code is told to put any step that would have needed your
+approval to a tool Relay supplies, and Relay asks you
+(see [adr/0005-approvals.md](adr/0005-approvals.md)). Claude's own questions arrive the same way.
+What is asked is agent output: a command, a file's content or a question may come from something
+the agent read, and may be written to get a yes.
+
+- **Nothing is allowed without a yes you typed.** Only `yes` or `y`, typed after the question was
+  shown, allows a step. An empty line, any other line, the end of input and Ctrl+C do not. Keys
+  pressed before the question appeared are thrown away, so a line typed for something else cannot
+  answer it.
+- **A yes covers one step.** Relay never remembers an answer and never changes an agent's
+  settings. Claude Code's own rules are applied first and are not widened.
+- **You are shown the step, not a description of it.** A command is shown in full. A step whose
+  command is too long to show in full is refused without asking. Any other value that is cut
+  short says how much is not shown.
+- **What is shown cannot pass for Relay's own lines.** Every line of it is cleaned like a folder
+  name and starts with Relay's indent.
+- **Nobody to ask means no.** Without a terminal Relay does not offer the tool at all. With
+  `/approvals off`, outside an agent's turn, or when the question cannot be read, the answer is no
+  and you are not asked.
+- **The tool is a second copy of Relay** (`relay approval-tool`), started by Claude Code. It
+  reaches the chatroom over a named pipe with a name made up for that run, which only your own
+  user can open. It decides nothing: if the chatroom cannot be reached, the answer is no. Another
+  program running as you could open the pipe and make Relay ask you something; it would learn your
+  answer and nothing more, and nothing would happen because of it.
+- **The file that names the tool** is written in a folder Relay creates for the run in your
+  temporary folder, never in the working directory, and holds only the path to Relay and the name
+  of the pipe.
+- **A folder you do not trust changes nothing here.** Its settings are still not loaded, so it
+  cannot allow anything by rule. It can still be what an agent read before it asked.
+
 ## Secrets and logging
 
 - Relay has no logging. The only thing it writes to disk is the list of trusted folder paths. Room
@@ -284,7 +319,12 @@ See "Remaining risks" for the cases this does not cover.
 | **Display spoofing with plain text.** An agent can print lines that look like chat lines, such as `You: ...`, though not in the real prompt's colours. | Accepted for now. |
 | **Unbounded output.** A CLI that printed gigabytes would exhaust memory. Claude's step-by-step output includes the result of every tool it uses, such as the contents of each file it reads, so a long turn now holds more than its reply. | Accepted for now. |
 | **Dependencies.** NuGet packages are pinned to exact versions. GitHub Actions are pinned to major tags, not commit hashes. | Accepted for now. |
-| **Permission prompts cannot be answered.** A step that needs approval is refused inside the agent CLI. Relay shows the refusal when Claude reports one. Codex does not report a refusal as such; what its sandbox forbids appears, if at all, as a failed command or in what Codex says. | Open (#11). |
+| **You can be talked into a yes.** What Relay shows before you answer is the agent's own request. A command can be written to look harmless, and a value other than a command is cut short after 12 lines, so you may allow a file's content you have not read in full. | Inherent to approving by hand. A command is always shown whole, and what is cut says so. Say no when in doubt: the agent is told, and can do it in smaller steps. |
+| **A turn waits for your answer for as long as you take.** With approvals on and nobody watching, an agent stops at its first question. | By design until a turn has a time limit (#29). `/approvals off` refuses without asking. |
+| **What you answer an agent is not in the room.** A yes, a no, and your answers to Claude's questions are told to Claude only. No other agent sees them, and `/history` does not show them. | Accepted. The reply that follows is what reaches the room. |
+| **Claude can call the asking tool itself.** You would be asked about a step that nothing is waiting to take. A yes allows nothing: it goes back to Claude as text. | Accepted. It cannot be told apart from a real request. |
+| **Codex cannot ask.** `codex exec` has no prompts: a step its sandbox forbids fails, and appears, if at all, as a failed command or in what Codex says. | Inherent to `codex exec`. Relay says which agents can ask. |
+| **Whether the questions appear in a real terminal is not covered by an automated test.** Every answer and every reason not to ask is tested in process, and the tool is tested as a real process. Nothing automated runs the chatroom with a terminal attached. | Accepted. An opt-in test runs the real Claude Code through everything but the terminal. |
 | **Activity can show you something misleading.** What is shown is what the agent reports, cut to one short line. A long command is not shown in full, and an agent could describe a step in a way that reads as harmless. | Accepted. It is a sign of life and a prompt to look closer, not a record of what was done. |
 
 ## Reporting a problem

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Relay.Agents;
+using Relay.Cli.Approvals;
 using Relay.Cli.Commands;
 using Relay.Cli.Infrastructure;
 using Relay.Cli.Ui;
@@ -11,6 +12,11 @@ using Relay.Core.Routing;
 using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;
+
+// Started by an agent's CLI, not by a person. Its standard streams carry a protocol, so this runs
+// before anything else could write to them.
+if (args is [ApprovalBridge.Command, var pipe])
+    return await ApprovalBridge.RunAsync(pipe, Console.OpenStandardInput(), Console.OpenStandardOutput());
 
 Console.OutputEncoding = Encoding.UTF8;
 
