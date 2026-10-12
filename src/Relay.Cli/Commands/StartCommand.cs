@@ -32,6 +32,8 @@ internal sealed class StartCommand(
     // Windows, and the folder below is named on their command line.
     private static readonly char[] UnsafeOnCommandLine = ['%', '!', '^', '&', '|', '<', '>', '"'];
 
+    private const string NoTerminal = "Relay asks you only when it is run in a terminal";
+
     private readonly ManualResetEventSlim _idle = new(initialState: true);
     private readonly Lock _writing = new();
     private CancellationTokenSource? _turn;
@@ -40,6 +42,7 @@ internal sealed class StartCommand(
     private Task<string?>? _read;
     private bool _readInterrupted;
     private ApprovalDesk? _desk;
+    private string? _noApprovals = NoTerminal;
     private CancellationTokenSource? _question;
     private volatile string? _asking;
 
@@ -55,11 +58,25 @@ internal sealed class StartCommand(
         if (!streams.IsInputRedirected && !streams.IsOutputRedirected && console.Profile.Capabilities.Interactive)
         {
             approvalFolder = Directory.CreateTempSubdirectory("relay-approval-").FullName;
-            if (approvalFolder.IndexOfAny(UnsafeOnCommandLine) < 0)
+            if (approvalFolder.IndexOfAny(UnsafeOnCommandLine) >= 0)
             {
-                _desk = new ApprovalDesk(console, _writing, () => _asking, ReadAnswer, DiscardTypedAhead);
-                approvals = new ApprovalServer(_desk.Decide);
-                approvals.Start();
+                _noApprovals = "the path of your temporary folder has a character in it that is not safe on a command line";
+            }
+            else
+            {
+                var desk = new ApprovalDesk(console, _writing, () => _asking, ReadAnswer, DiscardTypedAhead);
+                var server = new ApprovalServer(desk.Decide);
+                try
+                {
+                    server.Start();
+                    _desk = desk;
+                    approvals = server;
+                    _noApprovals = null;
+                }
+                catch (IOException ex)
+                {
+                    _noApprovals = $"the pipe Relay needs for it could not be opened ({RelayConsole.SafeLine(ex.Message)})";
+                }
             }
         }
 
@@ -301,7 +318,7 @@ internal sealed class StartCommand(
     private string DescribeApprovals(ChatRoom room)
     {
         if (_desk is null)
-            return "Approvals are not available: Relay asks you only when it is run in a terminal, so a step an agent's own settings do not allow is refused.";
+            return $"Approvals are not available: {_noApprovals}, so a step an agent's own settings do not allow is refused.";
         if (!_desk.Enabled)
             return "Approvals are off: nothing is put to you, and a step an agent's own settings do not allow is refused.";
 
@@ -541,8 +558,11 @@ internal sealed class StartCommand(
 
         console.WriteLine();
         console.MarkupLine(_folderStatus);
+        // Said without a terminal only when asked: there it is how Relay has always behaved.
         if (_desk is not null)
             console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
+        else if (_noApprovals != NoTerminal)
+            console.MarkupLine($"[yellow]{DescribeApprovals(room)}[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
     }

@@ -443,12 +443,22 @@ public sealed class ApprovalTests : IDisposable
     [Fact]
     public async Task With_no_relay_to_ask_the_answer_is_no()
     {
-        var bridge = _harness.Start(ApprovalBridge.Command, $"relay-approval-{Guid.NewGuid():N}");
+        var bridge = _harness.Start(ApprovalBridge.Command, $"relay-{Guid.NewGuid():N}"[..22]);
 
         await bridge.StandardInput.WriteLineAsync("""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ask","arguments":{"tool_name":"Bash","input":{"command":"ls"}}}}""");
         var content = Assert.Single((await ReplyToAsync(7)).GetProperty("result").GetProperty("content").EnumerateArray());
 
         Assert.Equal("deny", Json(content.GetProperty("text").GetString()!).GetProperty("behavior").GetString());
+    }
+
+    [Fact]
+    public async Task The_pipes_name_is_short_enough_to_be_a_socket_in_a_long_temporary_folder()
+    {
+        await using var server = new ApprovalServer(_ => "unreachable");
+
+        // macOS allows a socket's path 104 characters, and its temporary folder alone takes about 50.
+        Assert.True($"CoreFxPipe_{server.PipeName}".Length <= 33, server.PipeName);
+        Assert.NotEqual(server.PipeName, new ApprovalServer(_ => "unreachable").PipeName);
     }
 
     [Theory]

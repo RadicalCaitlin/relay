@@ -149,7 +149,7 @@ internal static class ApprovalBridge
             await writer.FlushAsync();
             return await reader.ReadLineAsync() ?? Refusal("Relay stopped before the user answered, so this was refused.");
         }
-        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or ArgumentException)
         {
             return Refusal("The user could not be asked, so this was refused.");
         }

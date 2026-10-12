@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -20,9 +21,25 @@ internal sealed class ApprovalServer(Func<ApprovalRequest, string> decide) : IAs
     private readonly CancellationTokenSource _stopping = new();
     private Task? _accepting;
 
-    public string PipeName { get; } = $"relay-approval-{Guid.NewGuid():N}";
+    // Short, because on macOS and Linux the name becomes part of a socket's path in the temporary
+    // folder, and such a path may be no longer than about a hundred characters.
+    public string PipeName { get; } = $"relay-{Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8))}";
 
-    public void Start() => _accepting = Task.Run(AcceptAsync);
+    /// <exception cref="IOException">The pipe could not be opened, so nobody can be asked.</exception>
+    public void Start()
+    {
+        NamedPipeServerStream first;
+        try
+        {
+            first = Open();
+        }
+        catch (Exception ex) when (ex is ArgumentException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            throw new IOException(ex.Message, ex);
+        }
+
+        _accepting = Task.Run(() => AcceptAsync(first));
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -32,12 +49,17 @@ internal sealed class ApprovalServer(Func<ApprovalRequest, string> decide) : IAs
         _stopping.Dispose();
     }
 
-    private async Task AcceptAsync()
+    private NamedPipeServerStream Open()
+        => new(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+    private async Task AcceptAsync(NamedPipeServerStream first)
     {
+        NamedPipeServerStream? next = first;
         while (!_stopping.IsCancellationRequested)
         {
-            var pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            var pipe = next ?? Open();
+            next = null;
             try
             {
                 await pipe.WaitForConnectionAsync(_stopping.Token);
