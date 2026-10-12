@@ -280,21 +280,31 @@ public sealed class ActivityTests : IDisposable
     [Fact]
     public async Task Runner_does_not_hand_over_what_a_background_process_writes_after_the_run_has_ended()
     {
+        // The background process keeps the output pipe open and writes its line only once the test
+        // says so, by creating "go", and then says it has by creating "done". Nothing here depends
+        // on how long the shell takes to start or to exit. It gives up by itself after 30 seconds,
+        // so a failed test leaves nothing running.
         var request = OperatingSystem.IsWindows()
             ? new ProcessRequest("powershell", ["-NoProfile", "-NonInteractive", "-Command",
-                "Write-Output first; Start-Process cmd -ArgumentList '/c ping -n 5 127.0.0.1 >nul & echo late' -NoNewWindow"])
-            : new ProcessRequest("sh", ["-c", "echo first; (sleep 4; echo late) &"]);
+                "Write-Output first; Start-Process powershell -NoNewWindow -ArgumentList '-NoProfile', '-NonInteractive', '-Command', "
+                + "'for ($i = 0; $i -lt 300 -and -not (Test-Path go); $i++) { Start-Sleep -Milliseconds 100 }; if (Test-Path go) { Write-Output late }; Set-Content done 1'"])
+            : new ProcessRequest("sh", ["-c",
+                "echo first; (i=0; while [ ! -e go ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; [ -e go ] && echo late; : > done) &"]);
         var lines = new List<string>();
 
         var result = await new ProcessRunner().RunAsync(request with
         {
+            WorkingDirectory = _harness.Directory,
             OnOutputLine = line =>
             {
                 lock (lines)
                     lines.Add(line);
             },
         });
-        await Task.Delay(TimeSpan.FromSeconds(6));
+        File.WriteAllText(_harness.PathTo("go"), string.Empty);
+        await Poll.UntilAsync(() => File.Exists(_harness.PathTo("done")), "the background process has written its line");
+        // The line is in the pipe by now. This is for the reader still attached to it to pass it on, if it were going to.
+        await Task.Delay(TimeSpan.FromSeconds(1));
 
         Assert.Equal(["first"], Lines(result.StandardOutput));
         lock (lines)
