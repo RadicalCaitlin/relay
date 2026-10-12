@@ -292,7 +292,9 @@ public sealed class ActivityTests : IDisposable
                 "echo first; (i=0; while [ ! -e go ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; [ -e go ] && echo late; : > done) &"]);
         var lines = new List<string>();
 
-        var before = $"threads {ThreadPool.ThreadCount}, pending {ThreadPool.PendingWorkItemCount}";
+        ThreadPool.GetMinThreads(out var minimum, out _);
+        var before = $"minimum {minimum}, threads {ThreadPool.ThreadCount}, pending {ThreadPool.PendingWorkItemCount}";
+        Console.WriteLine($"#49 pool before: {before}");
         var ran = System.Diagnostics.Stopwatch.StartNew();
         var result = await new ProcessRunner().RunAsync(request with
         {
