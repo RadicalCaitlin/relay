@@ -4,7 +4,6 @@ using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
 using Relay.Core.Routing;
-using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -15,7 +14,8 @@ internal sealed class StartCommand(
     AgentDiscoveryService discovery,
     IRoomManager rooms,
     MessageRouter router,
-    WorkspaceTrustStore trustStore) : AsyncCommand<StartCommand.Settings>
+    WorkspaceTrustPrompt trustPrompt,
+    IConsoleStreams streams) : AsyncCommand<StartCommand.Settings>
 {
     internal sealed class Settings : CommandSettings
     {
@@ -36,7 +36,9 @@ internal sealed class StartCommand(
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var options = new AgentSessionOptions(Environment.CurrentDirectory, ResolveTrust(settings, Environment.CurrentDirectory));
+        var trust = trustPrompt.Resolve(settings.TrustWorkspace, Environment.CurrentDirectory);
+        _folderStatus = trust.Status;
+        var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted);
         var room = rooms.CreateRoom("general");
         foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
             room.AddParticipant(AgentParticipant.Create(agent, options));
@@ -60,69 +62,6 @@ internal sealed class StartCommand(
         }
 
         return 0;
-    }
-
-    // The agent CLIs skip their own trust prompt when run non-interactively, so Relay keeps its own
-    // record. A folder is untrusted until the user says otherwise, and a yes is remembered.
-    private bool ResolveTrust(Settings settings, string folder)
-    {
-        var name = RelayConsole.SafeLine(folder);
-        var trusted = true;
-        if (settings.TrustWorkspace)
-            _folderStatus = $"[dim]Folder: {name} (trusted for this session)[/]";
-        else if (IsRemembered(folder))
-            _folderStatus = $"[dim]Folder: {name} (trusted)[/]";
-        else if (AskToTrust(name))
-            _folderStatus = Remember(folder)
-                ? $"[dim]Folder: {name} (trusted)[/]"
-                : $"[dim]Folder: {name} (trusted for this session)[/]";
-        else
-        {
-            trusted = false;
-            _folderStatus = $"[yellow]Folder: {name} (not trusted: Claude ignores its settings, hooks, MCP servers and CLAUDE.md, and Codex applies its own trust checks; run 'relay trust' here to change that)[/]";
-        }
-
-        return trusted;
-    }
-
-    private bool IsRemembered(string folder)
-    {
-        try
-        {
-            return trustStore.IsTrusted(folder);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            console.MarkupLine($"[yellow]Could not read the trusted-folder list: {RelayConsole.SafeLine(ex.Message)}[/]");
-            return false;
-        }
-    }
-
-    // Without a person who can both see the question and answer it, the folder stays untrusted.
-    private bool AskToTrust(string name)
-    {
-        if (Console.IsInputRedirected || Console.IsOutputRedirected || !console.Profile.Capabilities.Interactive)
-            return false;
-
-        console.MarkupLine($"Agents will run in [bold]{name}[/].");
-        console.MarkupLine("[dim]A trusted folder can configure Claude: its hooks and MCP servers run commands on your machine. Codex applies its own trust checks either way.[/]");
-        var trusted = console.Confirm("Do you trust the files in this folder?", defaultValue: false);
-        console.WriteLine();
-        return trusted;
-    }
-
-    private bool Remember(string folder)
-    {
-        try
-        {
-            trustStore.Trust(folder);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            console.MarkupLine($"[yellow]Could not remember this choice: {RelayConsole.SafeLine(ex.Message)}[/]");
-            return false;
-        }
     }
 
     private async Task RunLoopAsync(ChatRoom room, CancellationToken cancellationToken)
@@ -152,7 +91,7 @@ internal sealed class StartCommand(
                     break;
                 case "/clear":
                     // There is no screen to clear when output goes to a file or a pipe, and trying to throws.
-                    if (!Console.IsOutputRedirected)
+                    if (!streams.IsOutputRedirected)
                         console.Clear();
                     WriteHeader(room);
                     break;
