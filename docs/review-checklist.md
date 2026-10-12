@@ -32,9 +32,18 @@ Go through these in order. Defects come before tests and wording.
    test or which line meets each. "Where feasible" is not met by silence: say what was not done.
 6. **Does it keep to `docs/threat-model.md` and the security rules in `AGENTS.md`?** If the change
    is covered by the threat model, the threat model changes in the same pull request.
-7. **Do the tests cover failure, not only success?** A test that cannot fail when the behaviour
-   is broken is not coverage. For a fix, check that the test fails without it.
-8. **Are the README, `AGENTS.md` and comments still true?**
+7. **Can each test fail?** A test that cannot fail when the behaviour is broken is not coverage.
+   - For each new assertion, name a change to the code that would make it fail. An assertion about
+     a file or a value the code under test was never given passes whatever that code does.
+   - Take each branch of the new or moved code and say which test reaches it, including the
+     failure paths and the combinations of conditions, not only the path the issue describes.
+   - For a fix, check that the test fails without it.
+8. **What has the change made untrue outside the diff?** The diff does not show the line
+   elsewhere that it has made false, so go and look. Search the repository for the names, files
+   and behaviour the change touches:
+   - the README, `AGENTS.md`, `docs/threat-model.md` and the decision records;
+   - comments, in code the change did not touch as well;
+   - other code that reads the same value or does the same job a different way.
 
 ## How to write a finding
 
