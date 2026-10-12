@@ -18,7 +18,7 @@ conversation, and the **relay** (the router) decides which participant receives 
 | `src/Relay.Core`   | Domain models, provider/session contracts, rooms, routing                | nothing            |
 | `src/Relay.Agents` | Process execution, executable discovery, Claude and Codex providers      | Core               |
 | `src/Relay.Cli`    | Spectre.Console commands, chat UI, dependency injection wiring           | Core, Agents       |
-| `tests/Relay.Tests`| xUnit tests                                                              | Core, Agents       |
+| `tests/Relay.Tests`| xUnit tests                                                              | Core, Agents, Cli  |
 
 Boundaries that must hold:
 
@@ -37,6 +37,8 @@ Key types:
   (runs an exchange and reports why it stopped), `ExchangeLimits`, `SharedContext` (builds what an
   agent is sent: the room messages it has missed, then the user's message or another agent's handover).
 - `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
+- `Relay.Cli.Commands`: `WorkspaceTrustPrompt` (whether this folder is trusted, asking the user if
+  it must, and what the header says about it).
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
 
@@ -108,6 +110,10 @@ The build must stay free of warnings and the tests must pass before a change is 
   `InstallAgent` adds a fake `claude` or `codex` that records its arguments and standard input and
   prints whatever the test tells it to.
 - Assert on Relay's output with `RelayHarness.AssertShown`, which ignores line wrapping.
+- `RelayHarness` redirects every stream, so the folder-trust question can never be reached through
+  it. `WorkspaceTrustPromptTests` drives `WorkspaceTrustPrompt` in process instead, with Spectre's
+  `TestConsole` and a fake `IConsoleStreams`. That seam is supplied in code only: nothing in the
+  environment may make Relay ask, or answer, the trust question.
 - `ChatSignalTests` sends the CLI real signals.
   It is marked `[UnixFact]` and is skipped on Windows, where signals cannot be sent to a process.
 - `CodexFolderTrustLiveTests` is the one exception to the first rule: it runs the installed Codex

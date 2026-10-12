@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Relay.Agents;
 using Relay.Cli.Commands;
 using Relay.Cli.Infrastructure;
+using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
 using Relay.Core.Routing;
@@ -19,6 +20,8 @@ var services = new ServiceCollection()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
     .AddSingleton<MessageRouter>()
     .AddSingleton(new WorkspaceTrustStore(WorkspaceTrustStore.DefaultFilePath()))
+    .AddSingleton<IConsoleStreams, ConsoleStreams>()
+    .AddSingleton<WorkspaceTrustPrompt>()
     .AddSingleton(AnsiConsole.Console);
 
 var version = Assembly.GetExecutingAssembly()
