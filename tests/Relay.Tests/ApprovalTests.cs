@@ -581,9 +581,10 @@ public sealed class ApprovalTests : IDisposable
         }
 
         Assert.Equal("deny", await AskAsync());
-        // The end of the pipe this one connects to is the one that failed to open the first time.
+        // Until it is open again nobody is listening. On macOS and Linux a request made in that
+        // gap connects all the same and is then dropped, which the approval tool answers with a no.
+        await Poll.UntilAsync(() => Volatile.Read(ref opened) >= 3, "the pipe that could not be opened is opened again");
         Assert.Equal("deny", await AskAsync());
-        Assert.True(opened >= 3, $"The pipe was opened {opened} times.");
     }
 
     [Fact]
