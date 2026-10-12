@@ -517,13 +517,16 @@ public sealed class CliSmokeTests : IDisposable
         var relay = _harness.Start("start");
         await relay.StandardInput.WriteLineAsync("a note for later");
         // Twice, because a refusal that used up a delivery would withhold the note from the third try.
+        // Each turn is waited for until its explanation is shown: the fake agent records a turn
+        // before it reads what to print, so changing its output any sooner could turn the second
+        // refusal into the reply.
+        var explanation = Squash("only runs inside a Git repository");
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             await relay.StandardInput.WriteLineAsync($"@codex try {attempt}");
-            await Poll.UntilAsync(() => _harness.Invocations("codex").Count == attempt, $"turn {attempt} has run");
+            await Poll.UntilAsync(() => Squash(_harness.Output).Split(explanation).Length - 1 == attempt, $"turn {attempt} has been refused");
         }
 
-        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("only runs inside a Git repository")), "the explanation is shown");
         _harness.SetAgentOutput("codex", CodexReply("pong"));
         await relay.StandardInput.WriteLineAsync("@codex once more");
         await relay.StandardInput.WriteLineAsync("/exit");
