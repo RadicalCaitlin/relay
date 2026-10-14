@@ -39,4 +39,7 @@ public sealed class AgentException(string message, Exception? innerException = n
     /// CLI not starting. Relay then knows the agent has not seen what it was about to be sent.
     /// </summary>
     public bool PromptMayHaveBeenRead { get; init; } = true;
+
+    /// <summary>The agent was stopped because it ran past its time limit.</summary>
+    public bool TimedOut { get; init; }
 }

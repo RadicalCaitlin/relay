@@ -32,6 +32,10 @@ public enum StopReason
 
     TurnLimit,
     Failed,
+
+    /// <summary>The last agent ran past its time limit and was stopped.</summary>
+    TimedOut,
+
     Cancelled,
 
     /// <summary>The last reply was a handover to its own author, or to another agent with no text.</summary>
@@ -198,7 +202,7 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
                 // withheld, so a run of failures cannot pile up copies in the agent's conversation.
                 if (ex.PromptMayHaveBeenRead)
                     room.MarkSent(speaker, catchUp.Messages);
-                return End(StopReason.Failed, $"{speaker.DisplayName} failed: {ex.Message}");
+                return End(ex.TimedOut ? StopReason.TimedOut : StopReason.Failed, $"{speaker.DisplayName} failed: {ex.Message}");
             }
             catch (Exception ex)
             {

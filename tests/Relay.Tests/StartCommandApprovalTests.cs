@@ -82,12 +82,13 @@ public sealed class StartCommandApprovalTests : IDisposable
         }
     }
 
-    private (StartCommand Command, Task<int> Running) Start(AskingProvider provider)
+    private (StartCommand Command, Task<int> Running) Start(AskingProvider provider, string? turnTimeout = null)
     {
         var command = new StartCommand(_console, new AgentDiscoveryService([provider]), _rooms, new MessageRouter(),
             new WorkspaceTrustPrompt(_console, new WorkspaceTrustStore(null), _keyboard), _keyboard);
+        var settings = new StartCommand.Settings { TrustWorkspace = true, TurnTimeout = turnTimeout };
         // The context is Spectre's own and Relay never reads it.
-        return (command, Task.Run(() => command.ExecuteAsync(null!, new StartCommand.Settings { TrustWorkspace = true }, CancellationToken.None)));
+        return (command, Task.Run(() => command.ExecuteAsync(null!, settings, CancellationToken.None)));
     }
 
     private Task ReadsAsync(int count) => Poll.UntilAsync(() => _keyboard.Reads >= count, $"Relay has read the keyboard {count} times");
@@ -134,6 +135,43 @@ public sealed class StartCommandApprovalTests : IDisposable
         Assert.DoesNotContain(Assert.Single(_rooms.Rooms).Messages, m => m.SenderType == SenderType.Human && m.Content == "yes");
         await LeaveAsync(running);
         Assert.False(Directory.Exists(provider.Folder));
+    }
+
+    [Fact]
+    public async Task A_question_still_open_when_the_turn_runs_out_of_time_is_withdrawn()
+    {
+        var asked = new TaskCompletionSource<NamedPipeClientStream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new AskingProvider(options => new FakeSession(async (_, _) =>
+        {
+            var pipe = new NamedPipeClientStream(".", options.ApprovalTool!.Arguments[^1], PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+            await writer.WriteLineAsync("""{"tool_name":"Bash","input":{"command":"rm -rf build"}}""");
+            asked.SetResult(pipe);
+            // What the process runner does with the limit it is given: nobody answers, so the time runs out.
+            await Task.Delay(options.TurnTimeout!.Value);
+            throw new AgentException("'claude' did not finish within 2 seconds and was stopped.") { TimedOut = true };
+        }));
+        var (_, running) = Start(provider, turnTimeout: "2s");
+        await ReadsAsync(1);
+
+        _keyboard.Type("@claude tidy up");
+        await using var pipe = await asked.Task.WaitAsync(Patience);
+        await ReadsAsync(2);
+        AssertShown("? Claude wants to use Bash:", _console.Output);
+        using var answer = new StreamReader(pipe, leaveOpen: true);
+        Assert.Contains("deny", await answer.ReadLineAsync().WaitAsync(Patience));
+
+        // Typed by somebody who came back to the question after the turn had ended.
+        _keyboard.Type("yes");
+        await ReadsAsync(3);
+
+        Assert.Equal(TimeSpan.FromSeconds(2), provider.Options!.TurnTimeout);
+        AssertShown("Claude failed: 'claude' did not finish within 2 seconds and was stopped.", _console.Output);
+        AssertShown("Each turn may run for 2s.", _console.Output);
+        AssertShown("it was not sent to anyone", _console.Output);
+        Assert.DoesNotContain(Assert.Single(_rooms.Rooms).Messages, m => m.SenderType == SenderType.Human && m.Content == "yes");
+        await LeaveAsync(running);
     }
 
     [Fact]

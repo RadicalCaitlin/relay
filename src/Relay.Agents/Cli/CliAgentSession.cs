@@ -8,6 +8,7 @@ public sealed partial class CliAgentSession(
     IProcessRunner runner,
     string executablePath,
     string workingDirectory,
+    TimeSpan? turnTimeout,
     Func<string?, IReadOnlyList<string>> buildArguments,
     Func<ProcessResult, AgentReply> parseReply,
     Func<string, IEnumerable<AgentActivity>> parseActivity) : IAgentSession
@@ -38,6 +39,7 @@ public sealed partial class CliAgentSession(
             {
                 StandardInput = message,
                 WorkingDirectory = workingDirectory,
+                Timeout = turnTimeout,
                 OnOutputLine = activity is null ? null : activity.Read,
             };
             var reply = parseReply(await runner.RunAsync(request, linked.Token));

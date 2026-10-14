@@ -201,6 +201,37 @@ public class CliAgentTests
     }
 
     [Fact]
+    public async Task Session_gives_each_turn_its_time_limit_and_keeps_its_conversation_after_a_timeout()
+    {
+        var timeOut = false;
+        var runner = new FakeProcessRunner(_ => timeOut ? throw new AgentException("'claude' did not finish within 30 minutes and was stopped.") { TimedOut = true } : Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work", TurnTimeout: TimeSpan.FromMinutes(30)));
+        await session.SendAsync("first");
+
+        timeOut = true;
+        var ex = await Assert.ThrowsAsync<AgentException>(() => session.SendAsync("second"));
+        timeOut = false;
+        await session.SendAsync("third");
+
+        Assert.True(ex.TimedOut);
+        Assert.All(runner.Requests, request => Assert.Equal(TimeSpan.FromMinutes(30), request.Timeout));
+        Assert.Contains("--resume", runner.Requests[2].Arguments);
+    }
+
+    [Fact]
+    public async Task Session_without_a_time_limit_gives_its_turns_none()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(new("claude", "Claude", true, "/usr/bin/claude"), new("/work"));
+
+        await session.SendAsync("first");
+
+        Assert.Null(runner.Requests.Single().Timeout);
+    }
+
+    [Fact]
     public async Task Reset_clears_a_faulted_state()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => new(1, string.Empty, "boom")));

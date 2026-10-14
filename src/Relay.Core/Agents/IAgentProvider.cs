@@ -29,7 +29,10 @@ public interface IAgentProvider
 /// How an agent can ask the user before a step its own settings do not allow. Null when nobody can
 /// be asked, and the agent's CLI then refuses such a step itself.
 /// </param>
-public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false, ApprovalTool? ApprovalTool = null);
+/// <param name="TurnTimeout">
+/// How long one turn may run before the agent is stopped. Null for no limit.
+/// </param>
+public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false, ApprovalTool? ApprovalTool = null, TimeSpan? TurnTimeout = null);
 
 /// <summary>
 /// A program that speaks the Model Context Protocol over its standard streams and offers one tool,

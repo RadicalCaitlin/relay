@@ -299,6 +299,20 @@ public class ExchangeTests
     }
 
     [Fact]
+    public async Task Turn_that_ran_out_of_time_ends_the_exchange_and_says_so()
+    {
+        var claude = AddAgent("Claude", "@codex\nyour turn");
+        AddAgent("Codex", new FakeSession((_, _) => Task.FromException<string>(
+            new AgentException("'codex' did not finish within 30 minutes and was stopped.") { TimedOut = true })));
+
+        var result = await _router.SendHumanMessageAsync(_room, "@claude @codex agree");
+
+        Assert.Equal(StopReason.TimedOut, result.Reason);
+        Assert.Equal("Codex failed: 'codex' did not finish within 30 minutes and was stopped.", Notice(result));
+        Assert.Single(claude.Received);
+    }
+
+    [Fact]
     public async Task Failed_turn_ends_the_exchange_and_nobody_else_is_tried()
     {
         var claude = AddAgent("Claude", "@codex\nyour turn");

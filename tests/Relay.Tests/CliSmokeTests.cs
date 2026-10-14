@@ -590,6 +590,53 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Claude: pong", chat);
     }
 
+    [Theory]
+    [InlineData("0m")]
+    [InlineData("30")]
+    [InlineData("1.5h")]
+    [InlineData("-5m")]
+    [InlineData("25h")]
+    [InlineData("99999999999h")]
+    public async Task Start_refuses_a_turn_timeout_it_cannot_read(string value)
+    {
+        var (exitCode, output) = await _harness.RunAsync(["start", "--turn-timeout", value], "/exit");
+
+        Assert.NotEqual(0, exitCode);
+        AssertShown("--turn-timeout must be a whole number of seconds, minutes or hours", output);
+        AssertNotShown("# general", output);
+    }
+
+    [Fact]
+    public async Task Turn_that_runs_past_the_time_limit_is_stopped_and_the_agent_keeps_its_conversation()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+        var relay = _harness.Start("start", "--turn-timeout", "2s");
+        await relay.StandardInput.WriteLineAsync("@claude one");
+        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("Claude: pong")), "the first reply is shown");
+
+        _harness.InstallAgentScript(
+            "claude",
+            unixScript: "#!/bin/sh\nsleep 60\n",
+            windowsScript: "@echo off\nping -n 60 127.0.0.1 >nul\n");
+        await relay.StandardInput.WriteLineAsync("@claude two");
+        await Poll.UntilAsync(() => Squash(_harness.Output).Contains(Squash("Claude failed:")), "the timeout is shown");
+
+        _harness.InstallAgent("claude", ClaudeReply("back again"));
+        await relay.StandardInput.WriteLineAsync("@claude three");
+        await relay.StandardInput.WriteLineAsync("/exit");
+        await relay.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(0, relay.ExitCode);
+        AssertShown("An agent whose turn runs longer than 2s is stopped.", _harness.Output);
+        AssertShown("Claude failed: 'claude' did not finish within 2 seconds and was stopped.", _harness.Output);
+        AssertShown("Each turn may run for 2s. To allow longer turns, start Relay with a larger --turn-timeout", _harness.Output);
+        AssertNotShown("check that Claude works when you run it on its own", _harness.Output);
+        AssertShown("Claude: back again", _harness.Output);
+        var turns = _harness.Invocations("claude");
+        Assert.Equal(2, turns.Count);
+        Assert.EndsWith($"--resume {ClaudeSessionId}", turns[1]);
+    }
+
     [Fact]
     public async Task Agent_recovers_after_a_failure_and_keeps_its_conversation()
     {

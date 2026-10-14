@@ -89,7 +89,9 @@ The build must stay free of warnings and the tests must pass before a change is 
 - A failure message says what went wrong in terms the user can act on. `MessageRouter` turns any
   exception from a provider into a notice in the room, so one agent failing never ends the chat;
   that catch-all is for the provider boundary only, not a pattern to copy elsewhere.
-- A failed or cancelled turn must leave a session usable and its conversation intact.
+- A failed, cancelled or timed-out turn must leave a session usable and its conversation intact.
+  `relay start --turn-timeout` sets `AgentSessionOptions.TurnTimeout`; a turn that runs past it is
+  an `AgentException` with `TimedOut` set, and the router ends with `StopReason.TimedOut`.
 - Comments explain why, not what. No commented-out code.
 - Add an abstraction only when something concrete needs it (a second implementation or a test seam).
 - No new package dependencies without a clear need. No database, networking, or Aspire.
