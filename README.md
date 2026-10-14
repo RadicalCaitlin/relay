@@ -56,6 +56,7 @@ dotnet run --project src/Relay.Cli -- <command>
 | `relay agents`    | List agent providers, install status, version, and path  |
 | `relay start`     | Start an interactive chatroom                            |
 | `relay start --trust-workspace` | Start a chatroom, trusting the current folder for that session only |
+| `relay start --turn-timeout 30m` | Start a chatroom in which an agent whose turn runs longer than 30 minutes is stopped (`90s`, `30m`, `2h`; at most `24h`) |
 | `relay trust`     | Trust the current folder and remember it (`--remove` to undo, `--list` to show all) |
 | `relay --version` | Print the Relay version                                  |
 | `relay --help`    | Show help                                                |
@@ -257,7 +258,10 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 - Only Claude can ask you before a step its own settings do not allow, and only when Relay runs
   in a terminal (see "Approving a step"). Codex cannot: such a step fails, and Codex does not
   report it as a refusal. Codex also refuses to run outside a Git repository.
-- An agent's turn has no time limit. If an agent hangs, press `Ctrl+C` to cancel the request.
+- An agent's turn has no time limit unless you start Relay with `--turn-timeout`. Without one, press
+  `Ctrl+C` to cancel a request that hangs. With one, an agent that runs past it is stopped, Relay
+  says so, and the agent keeps its conversation. Time spent waiting for your answer to an approval
+  question counts towards the limit.
 - You cannot type while an agent is working, so an exchange can only be interrupted with `Ctrl+C`
   or, in pause mode, between turns.
 - One agent speaks at a time, and an exchange between agents is limited to 6 turns.

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Relay.Cli.Approvals;
 using Relay.Cli.Ui;
@@ -23,6 +24,36 @@ internal sealed class StartCommand(
         [CommandOption("--trust-workspace")]
         [Description("Trust the current folder for this session only: also load its own agent settings (hooks, MCP servers, CLAUDE.md), which can run commands. Use 'relay trust' to remember it.")]
         public bool TrustWorkspace { get; init; }
+
+        [CommandOption("--turn-timeout <TIME>")]
+        [Description("Stop an agent whose turn runs longer than this, such as 90s, 30m or 2h. Off by default: a turn runs until it ends or you press Ctrl+C.")]
+        public string? TurnTimeout { get; init; }
+
+        public override ValidationResult Validate()
+            => TurnTimeout is null || TryParseTime(TurnTimeout, out _)
+                ? ValidationResult.Success()
+                : ValidationResult.Error("--turn-timeout must be a whole number of seconds, minutes or hours, such as 90s, 30m or 2h, and no more than 24h.");
+
+        internal static bool TryParseTime(string text, out TimeSpan time)
+        {
+            time = default;
+            if (text.Length < 2 || !int.TryParse(text.AsSpan(0, text.Length - 1), NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count == 0)
+                return false;
+
+            long unit = char.ToLowerInvariant(text[^1]) switch
+            {
+                's' => 1,
+                'm' => 60,
+                'h' => 3600,
+                _ => 0,
+            };
+            var seconds = count * unit;
+            if (seconds is 0 or > 24 * 3600)
+                return false;
+
+            time = TimeSpan.FromSeconds(seconds);
+            return true;
+        }
     }
 
     // Windows allows about five seconds between a console-close notification and termination.
@@ -38,6 +69,7 @@ internal sealed class StartCommand(
     private readonly Lock _writing = new();
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
+    private string? _turnTimeout;
     private bool _pause;
     private Task<string?>? _read;
     private bool _readInterrupted;
@@ -52,6 +84,8 @@ internal sealed class StartCommand(
     {
         var trust = trustPrompt.Resolve(settings.TrustWorkspace, Environment.CurrentDirectory);
         _folderStatus = trust.Status;
+        _turnTimeout = settings.TurnTimeout;
+        TimeSpan? turnTimeout = settings.TurnTimeout is { } text && Settings.TryParseTime(text, out var time) ? time : null;
 
         // Without a person who can both see a question and answer it, nothing is put to anyone,
         // and an agent's CLI refuses what its own settings do not allow, as it always has.
@@ -88,7 +122,7 @@ internal sealed class StartCommand(
             }
 
             var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted,
-                approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!));
+                approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!), turnTimeout);
             foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
                 room.AddParticipant(AgentParticipant.Create(agent, options));
 
@@ -278,7 +312,9 @@ internal sealed class StartCommand(
             if (result.Reason == StopReason.NotAddressed)
                 console.MarkupLine("[dim]Recorded. Agents will see it the next time you address them, e.g. @claude hello[/]");
 
-            if (recipient?.State == AgentSessionState.Faulted)
+            if (result.Reason == StopReason.TimedOut)
+                console.MarkupLine($"[dim]Each turn may run for {Markup.Escape(_turnTimeout!)}. To allow longer turns, start Relay with a larger --turn-timeout, or without it for no limit. {Markup.Escape(recipient!.DisplayName)} keeps its conversation.[/]");
+            else if (recipient?.State == AgentSessionState.Faulted)
                 console.MarkupLine($"[dim]If this keeps happening, check that {Markup.Escape(recipient.DisplayName)} works when you run it on its own (for example, that you are signed in). /restart {Markup.Escape(recipient.Id)} starts a new conversation with it and shows it the room again.[/]");
         }
         finally
@@ -604,6 +640,8 @@ internal sealed class StartCommand(
             console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
         else if (_noApprovals != NoTerminal)
             console.MarkupLine($"[yellow]{DescribeApprovals(room)}[/]");
+        if (_turnTimeout is not null)
+            console.MarkupLine($"[dim]An agent whose turn runs longer than {Markup.Escape(_turnTimeout)} is stopped.[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
     }

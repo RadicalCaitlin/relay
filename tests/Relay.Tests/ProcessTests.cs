@@ -83,7 +83,26 @@ public class ProcessTests : IDisposable
         var ex = await Assert.ThrowsAsync<AgentException>(
             () => _runner.RunAsync(Sleep with { Timeout = TimeSpan.FromMilliseconds(300) }));
 
-        Assert.Contains("did not finish", ex.Message);
+        Assert.True(ex.TimedOut);
+        Assert.Contains("did not finish within 1 second and was stopped", ex.Message);
+    }
+
+    [Fact]
+    public async Task Runner_kills_descendants_of_the_process_when_it_times_out()
+    {
+        var pidFile = Path.Combine(_directory, "child.pid");
+        var wrapper = OperatingSystem.IsWindows()
+            ? new ProcessRequest("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+                $"$p = Start-Process ping -ArgumentList '-n 120 127.0.0.1' -PassThru -NoNewWindow; Set-Content -LiteralPath '{pidFile}' -Value $p.Id; $p.WaitForExit()"])
+            : new ProcessRequest("sh", ["-c", "sleep 120 & echo $! > \"$0\"; wait", pidFile]);
+
+        var run = _runner.RunAsync(wrapper with { Timeout = TimeSpan.FromSeconds(10) });
+        var child = await Poll.ForProcessIdAsync(pidFile);
+        Assert.True(Poll.IsRunning(child));
+
+        var ex = await Assert.ThrowsAsync<AgentException>(() => run);
+        Assert.True(ex.TimedOut);
+        await Poll.UntilAsync(() => !Poll.IsRunning(child), "the descendant process is gone", timeoutSeconds: 10);
     }
 
     [Fact]

@@ -54,7 +54,7 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
         if (discovery.ExecutablePath is not { } path)
             throw new InvalidOperationException($"{DisplayName} is not installed.");
         Prepare(options);
-        return new CliAgentSession(runner, path, options.WorkingDirectory, sessionId => BuildArguments(sessionId, options), ParseReply, ParseActivity);
+        return new CliAgentSession(runner, path, options.WorkingDirectory, options.TurnTimeout, sessionId => BuildArguments(sessionId, options), ParseReply, ParseActivity);
     }
 
     private async Task<string?> GetVersionAsync(string path, CancellationToken cancellationToken)

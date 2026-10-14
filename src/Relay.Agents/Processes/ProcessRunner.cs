@@ -97,7 +97,7 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new AgentException($"'{name}' did not finish within {request.Timeout!.Value.TotalSeconds:0} seconds.");
+            throw new AgentException($"'{name}' did not finish within {Describe(request.Timeout!.Value)} and was stopped.") { TimedOut = true };
         }
         finally
         {
@@ -189,6 +189,15 @@ public sealed class ProcessRunner : IProcessRunner
             }
         }
     }
+
+    private static string Describe(TimeSpan duration) => duration switch
+    {
+        { TotalHours: >= 1 } when duration.Minutes == 0 && duration.Seconds == 0 => Plural((int)duration.TotalHours, "hour"),
+        { TotalMinutes: >= 1 } when duration.Seconds == 0 => Plural((int)duration.TotalMinutes, "minute"),
+        _ => Plural((int)Math.Ceiling(duration.TotalSeconds), "second"),
+    };
+
+    private static string Plural(int count, string unit) => count == 1 ? $"1 {unit}" : $"{count} {unit}s";
 
     private static string Snapshot(StringBuilder sink)
     {
