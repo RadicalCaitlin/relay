@@ -56,6 +56,8 @@ dotnet run --project src/Relay.Cli -- <command>
 | `relay agents`    | List agent providers, install status, version, and path  |
 | `relay start`     | Start an interactive chatroom                            |
 | `relay start --trust-workspace` | Start a chatroom, trusting the current folder for that session only |
+| `relay start --workspace <path>` | Start a chatroom whose agents work in that folder instead of the current one |
+| `relay start --agents claude,codex` | Start a chatroom with only the agents named; each must be installed |
 | `relay start --turn-timeout 30m` | Start a chatroom in which an agent whose turn runs longer than 30 minutes is stopped (`90s`, `30m`, `2h`; at most `24h`) |
 | `relay trust`     | Trust the current folder and remember it (`--remove` to undo, `--list` to show all) |
 | `relay --version` | Print the Relay version                                  |
@@ -227,9 +229,9 @@ and ignores the folder's own hooks, MCP servers, settings and `CLAUDE.md`. This 
 folder's hooks and MCP servers run commands on your machine, and Claude Code does not show its
 usual trust prompt when Relay starts it.
 
-The first time you run `relay start` in a folder it asks whether you trust the files there. A yes
-is remembered, so you are asked once per folder; `relay trust --remove` undoes it. Trust only
-folders you would run code from. The chatroom header shows which mode is in effect.
+The first time you run `relay start` in a folder, or name it with `--workspace`, it asks whether
+you trust the files there. A yes is remembered, so you are asked once per folder; `relay trust
+--remove` undoes it. Trust only folders you would run code from. The chatroom header shows which mode is in effect.
 
 This setting governs Claude only. Codex applies its own trust checks: in a folder you have never
 trusted in Codex it runs none of the folder's hooks or MCP servers, but it does read the folder's

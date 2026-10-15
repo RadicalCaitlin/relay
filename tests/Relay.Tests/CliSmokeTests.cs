@@ -590,6 +590,70 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Claude: pong", chat);
     }
 
+    [Fact]
+    public async Task Agents_work_in_the_folder_named_by_workspace_and_its_trust_is_the_one_that_counts()
+    {
+        var workspace = Directory.CreateDirectory(_harness.PathTo("project")).FullName;
+        _harness.InstallAgentScript(
+            "claude",
+            unixScript: $"#!/bin/sh\npwd > \"$RELAY_TEST_DIR/claude-cwd.txt\"\ncat > /dev/null\necho '{ClaudeReply("pong")}'\n",
+            windowsScript: $"@echo off\ncd > \"%RELAY_TEST_DIR%\\claude-cwd.txt\"\necho {ClaudeReply("pong")}\n");
+        _harness.WorkingDirectory = workspace;
+        await _harness.ChatAsync(["trust"]);
+        _harness.WorkingDirectory = _harness.Directory;
+
+        var output = await _harness.ChatAsync(["start", "--workspace", "project"], "@claude hi", "/exit");
+
+        AssertShown($"Folder: {workspace} (trusted)", output);
+        AssertShown("Claude: pong", output);
+        Assert.Equal(workspace, Poll.ReadShared(_harness.PathTo("claude-cwd.txt")).Trim());
+    }
+
+    [Theory]
+    [InlineData("no-such-folder")]
+    [InlineData("claude-version.txt")]
+    public async Task Start_refuses_a_workspace_that_is_not_a_folder(string workspace)
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var (exitCode, output) = await _harness.RunAsync(["start", "--workspace", workspace], "@claude hi", "/exit");
+
+        Assert.NotEqual(0, exitCode);
+        AssertShown($"--workspace must name a folder that exists. Not found: {workspace}", output);
+        AssertNotShown("# general", output);
+        Assert.Empty(_harness.Invocations("claude"));
+    }
+
+    [Fact]
+    public async Task Only_the_agents_named_by_agents_join_the_room()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var output = await _harness.ChatAsync(["start", "--agents", "@Claude"], "@codex hi", "/exit");
+
+        AssertShown("Claude connected", output);
+        AssertNotShown("Codex connected", output);
+        AssertShown("No agent named @codex in this room. Agents here: @claude.", output);
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    [Theory]
+    [InlineData("claude,gemini", "--agents: Relay has no agent called gemini. Agents it knows: claude, codex.")]
+    [InlineData("codex", "--agents: Codex is not available. 'codex' was not found on PATH.")]
+    [InlineData(" , ", "--agents must name at least one agent")]
+    public async Task Start_refuses_agents_it_cannot_bring_into_the_room(string agents, string error)
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var (exitCode, output) = await _harness.RunAsync(["start", "--agents", agents], "@claude hi", "/exit");
+
+        Assert.NotEqual(0, exitCode);
+        AssertShown(error, output);
+        AssertNotShown("# general", output);
+        Assert.Empty(_harness.Invocations("claude"));
+    }
+
     [Theory]
     [InlineData("0m")]
     [InlineData("30")]

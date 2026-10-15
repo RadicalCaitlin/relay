@@ -25,14 +25,47 @@ internal sealed class StartCommand(
         [Description("Trust the current folder for this session only: also load its own agent settings (hooks, MCP servers, CLAUDE.md), which can run commands. Use 'relay trust' to remember it.")]
         public bool TrustWorkspace { get; init; }
 
+        [CommandOption("--workspace <PATH>")]
+        [Description("The folder agents work in. Defaults to the current folder.")]
+        public string? Workspace { get; init; }
+
+        [CommandOption("--agents <IDS>")]
+        [Description("Only these agents join the room, separated by commas, such as claude,codex. Each must be installed. Defaults to every agent Relay knows.")]
+        public string? Agents { get; init; }
+
         [CommandOption("--turn-timeout <TIME>")]
         [Description("Stop an agent whose turn runs longer than this, such as 90s, 30m or 2h. Off by default: a turn runs until it ends or you press Ctrl+C.")]
         public string? TurnTimeout { get; init; }
 
         public override ValidationResult Validate()
-            => TurnTimeout is null || TryParseTime(TurnTimeout, out _)
-                ? ValidationResult.Success()
-                : ValidationResult.Error("--turn-timeout must be a whole number of seconds, minutes or hours, such as 90s, 30m or 2h, and no more than 24h.");
+        {
+            if (TurnTimeout is not null && !TryParseTime(TurnTimeout, out _))
+                return ValidationResult.Error("--turn-timeout must be a whole number of seconds, minutes or hours, such as 90s, 30m or 2h, and no more than 24h.");
+            if (Workspace is not null && ResolveWorkspace(Workspace) is null)
+                return ValidationResult.Error($"--workspace must name a folder that exists. Not found: {Workspace}");
+            if (Agents is not null && AgentIds(Agents).Count == 0)
+                return ValidationResult.Error("--agents must name at least one agent, such as --agents claude or --agents claude,codex.");
+            return ValidationResult.Success();
+        }
+
+        /// <summary>The folder as a full path, resolved against the current folder, or null if there is no such folder.</summary>
+        internal static string? ResolveWorkspace(string path)
+        {
+            try
+            {
+                var full = Path.GetFullPath(path);
+                return Directory.Exists(full) ? full : null;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return null;
+            }
+        }
+
+        internal static IReadOnlyList<string> AgentIds(string text)
+            => [.. text.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(id => id.TrimStart('@').ToLowerInvariant())
+                .Distinct()];
 
         internal static bool TryParseTime(string text, out TimeSpan time)
         {
@@ -70,6 +103,7 @@ internal sealed class StartCommand(
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
     private string? _turnTimeout;
+    private string _workspace = string.Empty;
     private bool _pause;
     private Task<string?>? _read;
     private bool _readInterrupted;
@@ -82,7 +116,26 @@ internal sealed class StartCommand(
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        var trust = trustPrompt.Resolve(settings.TrustWorkspace, Environment.CurrentDirectory);
+        var workspace = _workspace = settings.Workspace is { } path ? Settings.ResolveWorkspace(path)! : Environment.CurrentDirectory;
+        var agents = await discovery.DiscoverAllAsync(cancellationToken: cancellationToken);
+        if (settings.Agents is { } chosen)
+        {
+            var ids = Settings.AgentIds(chosen);
+            if (ids.FirstOrDefault(id => agents.All(a => a.Provider.Id != id)) is { } unknown)
+            {
+                console.MarkupLine($"[red]--agents: Relay has no agent called {Markup.Escape(unknown)}. Agents it knows: {Markup.Escape(string.Join(", ", agents.Select(a => a.Provider.Id)))}.[/]");
+                return 1;
+            }
+
+            agents = [.. agents.Where(a => ids.Contains(a.Provider.Id))];
+            if (agents.FirstOrDefault(a => !a.Result.IsInstalled) is { } missing)
+            {
+                console.MarkupLine($"[red]--agents: {Markup.Escape(missing.Result.DisplayName)} is not available. {RelayConsole.Safe(missing.Result.Detail ?? string.Empty)}[/]");
+                return 1;
+            }
+        }
+
+        var trust = trustPrompt.Resolve(settings.TrustWorkspace, workspace);
         _folderStatus = trust.Status;
         _turnTimeout = settings.TurnTimeout;
         TimeSpan? turnTimeout = settings.TurnTimeout is { } text && Settings.TryParseTime(text, out var time) ? time : null;
@@ -121,9 +174,9 @@ internal sealed class StartCommand(
                 }
             }
 
-            var options = new AgentSessionOptions(Environment.CurrentDirectory, trust.Trusted,
+            var options = new AgentSessionOptions(workspace, trust.Trusted,
                 approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!), turnTimeout);
-            foreach (var agent in await discovery.DiscoverAllAsync(cancellationToken: cancellationToken))
+            foreach (var agent in agents)
                 room.AddParticipant(AgentParticipant.Create(agent, options));
 
             WriteHeader(room);
@@ -669,7 +722,7 @@ internal sealed class StartCommand(
     // line that names the agent, so it cannot pass for a message in the room.
     private void WriteActivity(AgentActivity activity)
     {
-        var text = RelayConsole.ActivityLine(activity.Text, Environment.CurrentDirectory);
+        var text = RelayConsole.ActivityLine(activity.Text, _workspace);
         lock (_writing)
             console.MarkupLine(activity.Kind == AgentActivityKind.Problem ? $"[yellow]  ! {text}[/]" : $"[dim]  - {text}[/]");
     }
