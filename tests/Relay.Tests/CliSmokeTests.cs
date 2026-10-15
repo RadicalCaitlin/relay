@@ -590,8 +590,10 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Claude: pong", chat);
     }
 
-    [Fact]
-    public async Task Agents_work_in_the_folder_named_by_workspace_and_its_trust_is_the_one_that_counts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Agents_work_in_the_folder_named_by_workspace_and_its_trust_is_the_one_that_counts(bool fullPath)
     {
         var workspace = Directory.CreateDirectory(_harness.PathTo("project")).FullName;
         _harness.InstallAgentScript(
@@ -602,9 +604,10 @@ public sealed class CliSmokeTests : IDisposable
         await _harness.ChatAsync(["trust"]);
         _harness.WorkingDirectory = _harness.Directory;
 
-        var output = await _harness.ChatAsync(["start", "--workspace", "project"], "@claude hi", "/exit");
+        var output = await _harness.ChatAsync(["start", "--workspace", fullPath ? workspace + Path.DirectorySeparatorChar : "project"], "@claude hi", "/exit");
 
-        // macOS reports the temp folder through its /private symlink, as Relay sees it and the agent runs in it.
+        // On macOS the temp folder is reached through the /private link. 'relay trust' remembered the
+        // real path, so Relay must resolve the link in the full path given to it too.
         var seen = OperatingSystem.IsMacOS() ? "/private" + workspace : workspace;
         AssertShown($"Folder: {seen} (trusted)", output);
         AssertShown("Claude: pong", output);
@@ -640,10 +643,23 @@ public sealed class CliSmokeTests : IDisposable
         Assert.Empty(_harness.Invocations("codex"));
     }
 
+    [Fact]
+    public async Task Agents_command_lists_only_the_agents_in_the_room()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var output = await _harness.ChatAsync(["start", "--agents", "claude"], "/agents", "/exit");
+
+        AssertShown("@claude", output);
+        AssertNotShown("@codex", output);
+    }
+
     [Theory]
     [InlineData("claude,gemini", "--agents: Relay has no agent called gemini. Agents it knows: claude, codex.")]
     [InlineData("codex", "--agents: Codex is not available. 'codex' was not found on PATH.")]
     [InlineData(" , ", "--agents must name at least one agent")]
+    [InlineData("@", "--agents must name at least one agent")]
     public async Task Start_refuses_agents_it_cannot_bring_into_the_room(string agents, string error)
     {
         _harness.InstallAgent("claude", ClaudeReply("unused"));

@@ -154,7 +154,8 @@ and update it in the same change.
 
 - The working directory (the current folder, or `relay start --workspace`) is untrusted unless
   `AgentSessionOptions.TrustWorkspace` is set. A provider must not let folder content configure the
-  agent or run commands when it is false. For Claude that means `--setting-sources user`. A new provider must document how it meets this, with evidence.
+  agent or run commands when it is false. For Claude that means `--setting-sources user`. A new
+  provider must document how it meets this, with evidence.
 - Use only documented CLI arguments. Never guess or invent flags.
 - Never pass flags that auto-approve tool use or weaken sandboxing, such as
   `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`,
