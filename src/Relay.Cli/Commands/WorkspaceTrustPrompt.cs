@@ -27,7 +27,7 @@ internal sealed class WorkspaceTrustPrompt(IAnsiConsole console, WorkspaceTrustS
                 ? $"[dim]Folder: {name} (trusted)[/]"
                 : $"[dim]Folder: {name} (trusted for this session)[/]");
 
-        return new WorkspaceTrustDecision(false, $"[yellow]Folder: {name} (not trusted: Claude ignores its settings, hooks, MCP servers and CLAUDE.md, and Codex applies its own trust checks; run 'relay trust' here to change that)[/]");
+        return new WorkspaceTrustDecision(false, $"[yellow]Folder: {name} (not trusted: Claude ignores its settings, hooks, MCP servers and CLAUDE.md, and Codex applies its own trust checks; to change that, go to it and run 'relay trust')[/]");
     }
 
     private bool IsRemembered(string folder)

@@ -18,7 +18,11 @@ internal static class RelayConsole
     /// containing a line break could otherwise add lines that look like Relay's own output.
     /// </summary>
     public static string SafeLine(string text)
-        => Markup.Escape(string.Concat(text.Where(c => !IsUnsafe(c))));
+        => Markup.Escape(PlainLine(text));
+
+    /// <summary>As <see cref="SafeLine"/>, for text that is printed as written rather than as markup, such as a validation error.</summary>
+    public static string PlainLine(string text)
+        => string.Concat(text.Where(c => !IsUnsafe(c)));
 
     /// <summary>
     /// One safe line describing a step an agent took: line breaks become spaces, paths under

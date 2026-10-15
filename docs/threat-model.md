@@ -40,8 +40,10 @@ Relay therefore treats a folder as untrusted until you say otherwise, and passes
 `--setting-sources user` so Claude loads only your own user-level settings. To load the folder's
 settings as well:
 
-- answer yes when `relay start` asks "Do you trust the files in this folder?" The answer is
-  remembered, so you are asked once per folder. A no is not remembered; you are asked again next time.
+- answer yes when `relay start` asks "Do you trust the files in this folder?" The folder is the
+  current one, or the one named by `--workspace`, and that is the folder the answer is about. The
+  answer is remembered, so you are asked once per folder. A no is not remembered; you are asked
+  again next time.
 - run `relay trust` in the folder, which remembers it without starting a chat.
 - pass `relay start --trust-workspace`, which trusts it for that session only and remembers nothing.
 
