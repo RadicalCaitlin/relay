@@ -604,9 +604,11 @@ public sealed class CliSmokeTests : IDisposable
 
         var output = await _harness.ChatAsync(["start", "--workspace", "project"], "@claude hi", "/exit");
 
-        AssertShown($"Folder: {workspace} (trusted)", output);
+        // macOS reports the temp folder through its /private symlink, as Relay sees it and the agent runs in it.
+        var seen = OperatingSystem.IsMacOS() ? "/private" + workspace : workspace;
+        AssertShown($"Folder: {seen} (trusted)", output);
         AssertShown("Claude: pong", output);
-        Assert.Equal(workspace, Poll.ReadShared(_harness.PathTo("claude-cwd.txt")).Trim());
+        Assert.Equal(seen, Poll.ReadShared(_harness.PathTo("claude-cwd.txt")).Trim());
     }
 
     [Theory]
