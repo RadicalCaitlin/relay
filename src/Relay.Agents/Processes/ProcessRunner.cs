@@ -88,6 +88,18 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             }
         }
 
+        if (_watch is not null)
+        {
+            try
+            {
+                _watch.EnsureRunning();
+            }
+            catch (IOException ex)
+            {
+                throw NotCovered(name, ex);
+            }
+        }
+
         var process = new Process { StartInfo = startInfo };
         try
         {

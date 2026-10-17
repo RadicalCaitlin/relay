@@ -178,7 +178,9 @@ and update it in the same change.
   `ProcessRunner` puts Relay in `KillOnExitJob` before it starts anything, and Windows kills the
   job's processes when Relay ends. On macOS and Linux `ProcessRunner` starts each agent through
   `relay agent-session`, which gives it a session and process group of its own, with no terminal,
-  before it becomes the agent. It then tells `relay agent-watcher` (`AgentWatcher`) the agent's id
+  before it becomes the agent. It starts `relay agent-watcher` (`AgentWatcher`) before the agent,
+  if it is not already running, so that telling it about the agent is a single write. It then
+  tells the watcher the agent's id
   and the time it started it, and tells it again once the agent has exited. When its input ends,
   which is when Relay ends, the watcher kills the group of every agent still running. A watcher
   that dies is replaced at once and told every agent still running. If Relay cannot join the job

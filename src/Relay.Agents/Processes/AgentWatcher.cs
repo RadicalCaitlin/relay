@@ -43,7 +43,6 @@ public static class AgentWatcher
 
         using var stop = new CancellationTokenSource();
         var orphaned = OrphanedAsync(relay, stop.Token);
-        Trace($"start pid={Environment.ProcessId} relay={relay} ppid={(OperatingSystem.IsWindows() ? 0 : getppid())}");
 
         var agents = new Dictionary<int, DateTime>();
         using var reader = new StreamReader(input);
@@ -52,19 +51,10 @@ public static class AgentWatcher
             var read = reader.ReadLineAsync();
             if (!orphaned.IsCompleted)
                 await Task.WhenAny(read, orphaned);
-            if (orphaned.IsCompleted)
-                Trace($"orphaned ppid={(OperatingSystem.IsWindows() ? 0 : getppid())} readDone={read.IsCompleted}");
             if (!read.IsCompleted && await Task.WhenAny(read, Task.Delay(Drain)) != read)
-            {
-                Trace("drain timed out");
                 break;
-            }
             if (await read is not { } line)
-            {
-                Trace("eof");
                 break;
-            }
-            Trace($"line {line}");
 
             if (line.StartsWith('+') && line[1..].Split(' ') is [var added, var ticks]
                 && int.TryParse(added, CultureInfo.InvariantCulture, out var id)
@@ -75,28 +65,9 @@ public static class AgentWatcher
         }
 
         await stop.CancelAsync();
-        Trace($"killing [{string.Join(' ', agents.Keys)}]");
         foreach (var (id, start) in agents)
-        {
-            try
-            {
-                Kill(id, start);
-            }
-            catch (Exception ex)
-            {
-                Trace($"kill {id} threw {ex}");
-                throw;
-            }
-        }
-        Trace("done");
+            Kill(id, start);
         return 0;
-    }
-
-    // TEMPORARY DIAGNOSTIC for the intermittent macOS failure; removed once it is understood.
-    private static void Trace(string message)
-    {
-        if (Environment.GetEnvironmentVariable("RELAY_WATCHER_TRACE") is { Length: > 0 } path)
-            File.AppendAllText(path, $"{DateTime.UtcNow:HH:mm:ss.fff} [{Environment.ProcessId}] {message}\n");
     }
 
     /// <summary>
@@ -147,20 +118,13 @@ public static class AgentWatcher
     private static void Kill(int id, DateTime start)
     {
         using var process = Find(id);
-        Trace($"kill {id}: found={process is not null} sid={(OperatingSystem.IsWindows() || process is null ? 0 : getsid(id))}");
         if (process is not null && !IsAgent(process, start))
-        {
-            Trace($"kill {id}: not the agent");
             return;
-        }
 
         // While a process group exists its id is not given to a new process, so with no process of
         // that id left, any group of that id is the agent's: what it started and left behind.
         if (!OperatingSystem.IsWindows())
-        {
             ProcessKill.Group(id);
-            Trace($"kill {id}: group signalled, errno={Marshal.GetLastPInvokeError()}");
-        }
 
         // Relay may be killed before the agent has made its group, and Windows has no groups at all.
         if (process is not null)
@@ -255,6 +219,24 @@ internal sealed class AgentWatch(ProcessRequest relay)
     private long _started;
 
     public ProcessRequest Relay => relay;
+
+    /// <summary>
+    /// Starts the watcher, if it is not running, before an agent is: telling it about the agent is
+    /// then one write. Started only then, it can take long enough to start that Relay is killed
+    /// after the agent has started and before the watcher has heard of it.
+    /// </summary>
+    /// <exception cref="IOException">The watcher could not be started, so no agent would be covered.</exception>
+    public void EnsureRunning()
+    {
+        lock (_gate)
+        {
+            if (_process is { HasExited: false })
+                return;
+
+            Discard();
+            StartAndTellAll();
+        }
+    }
 
     /// <exception cref="IOException">The watcher could not be started or told, so the agent is not covered.</exception>
     public void Add(Process agent)

@@ -311,7 +311,8 @@ group of its own, which everything the agent starts joins and stays in, even aft
 exits. The session has no terminal, so the terminal's Ctrl+C and hangup reach only Relay, and a
 tool that asks on the terminal, such as an ssh passphrase prompt or sudo, fails at once instead of
 waiting for input it can never get. Relay also starts a second copy of itself,
-`relay agent-watcher`, with the first agent it runs. Over a pipe only Relay holds the other end
+`relay agent-watcher`, before the first agent it runs, so that telling it about each agent is
+a single write while the agent is still starting. Over a pipe only Relay holds the other end
 of, it tells the watcher each agent it starts, with its start time, and each one as soon as it
 has exited. That pipe closes when Relay ends, however it ends. Relay also gives the watcher its
 own process id, and the watcher notices when Relay is no longer its parent, in case another
