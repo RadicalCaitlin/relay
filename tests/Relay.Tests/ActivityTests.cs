@@ -171,6 +171,13 @@ public sealed class ActivityTests : IDisposable
             [Action("Skill: code-review", "Skill")],
             ClaudeOutputParser.ParseActivity("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_5","name":"Skill","input":{"skill":"code-review","args":"70 high"}}]}}"""));
 
+    // A tool that reports a skill and something more telling is shown with the more telling one.
+    [Fact]
+    public void A_skill_field_does_not_hide_a_command()
+        => Assert.Equal(
+            [Action("Run: dotnet test", "Run")],
+            ClaudeOutputParser.ParseActivity("""{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Run","input":{"skill":"tests","command":"dotnet test"}}]}}"""));
+
     [Theory]
     [InlineData("Skill: code-review", "Skill", "[bold]Skill[/]: code-review")]
     [InlineData("Read: notes.txt", "Read", "[bold]Read[/]: notes.txt")]

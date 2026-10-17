@@ -12,7 +12,8 @@ namespace Relay.Agents.Claude;
 public static class ClaudeOutputParser
 {
     // The parts of a tool's input that say what it was used on, most telling first.
-    private static readonly string[] SubjectKeys = ["skill", "command", "file_path", "pattern", "url", "query", "description"];
+    // "skill" last, so it names what the Skill tool ran without hiding a command or path another tool reports.
+    private static readonly string[] SubjectKeys = ["command", "file_path", "pattern", "url", "query", "description", "skill"];
 
     public static AgentReply Parse(ProcessResult result)
     {

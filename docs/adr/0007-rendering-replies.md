@@ -42,8 +42,12 @@ Relay's few styles a span gets, and nothing else.**
 | `> quote` | Dim, behind a dim `│` |
 | Anything else (tables, links, images, HTML, rules) | As written |
 
-- A marker that is not closed on the same line is shown as written. Emphasis closes at the first
-  matching marker, so `**a *b***` is bold `a *b` followed by `*`.
+- A marker that is not closed on the same line is shown as written. Emphasis opens only at the
+  start of a word and closes only at the end of one, so a glob such as `**/*.cs` or a product
+  `a*b*c` is shown as written. A code span is passed over whole, so a marker inside it never
+  closes emphasis around it.
+- A fenced block ends only at a fence at least as long as the one that opened it, so a block can
+  show another block.
 - A line longer than 4,000 characters is shown as written: finding closing markers on a line
   made mostly of unclosed ones costs time in proportion to the square of its length.
 - Without a terminal that can show Unicode, `-` stands for `•` and `|` for `│`.
@@ -72,8 +76,9 @@ very long lines.
 
 - **Mentions.** A reply recorded as addressed to an agent in the room (`ChatMessage.TargetId`,
   which the router sets only for a handover inside an exchange) has its leading `@id` shown in
-  the style Relay uses for agent names. A human message in `/history` has highlighted only the leading mentions
-  that name agents in the room, which are the ones that addressed it. A mention anywhere else is
+  the style Relay uses for agent names. A human message in `/history` that the router recorded as
+  addressed to an agent has highlighted the leading mentions that name agents in the room, read
+  as the router reads them, including after a comma or colon. A mention anywhere else is
   plain text. Whether a handover was then delivered is said, as now, by the notice that follows it.
 - **Skills and tools.** In an activity line for a step, the tool's name is highlighted. Claude's
   `Skill` tool is shown with the skill it ran (`Skill: code-review`), and `skill` is read like the
