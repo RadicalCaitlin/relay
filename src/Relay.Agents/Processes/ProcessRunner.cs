@@ -29,11 +29,17 @@ public interface IProcessRunner
     Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default);
 }
 
-public sealed class ProcessRunner : IProcessRunner
+/// <param name="watcher">
+/// How to start <see cref="AgentWatcher"/>, which stops the agents on macOS and Linux if Relay is
+/// killed. Windows uses <see cref="KillOnExitJob"/> instead and ignores it.
+/// </param>
+public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KillGrace = TimeSpan.FromSeconds(5);
+
+    private readonly AgentWatch? _watch = watcher is null || OperatingSystem.IsWindows() ? null : new(watcher);
 
     public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
     {
@@ -69,8 +75,7 @@ public sealed class ProcessRunner : IProcessRunner
             catch (Win32Exception ex)
             {
                 // Started anyway, the agent would keep running if Relay were killed.
-                throw new AgentException(
-                    $"Did not start '{name}': Relay could not make sure it stops when Relay does ({ex.Message}).", ex) { PromptMayHaveBeenRead = false };
+                throw NotCovered(name, ex);
             }
         }
 
@@ -82,6 +87,20 @@ public sealed class ProcessRunner : IProcessRunner
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
             throw new AgentException($"Could not start '{name}': {ex.Message}", ex) { PromptMayHaveBeenRead = false };
+        }
+
+        if (_watch is not null)
+        {
+            try
+            {
+                _watch.Add(process.Id);
+            }
+            catch (IOException ex)
+            {
+                // Nothing has been written to it yet, so it has read nothing.
+                await KillAsync(process);
+                throw NotCovered(name, ex);
+            }
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -118,6 +137,7 @@ public sealed class ProcessRunner : IProcessRunner
             // Whatever went wrong, never leave the CLI running behind us.
             if (!process.HasExited)
                 await KillAsync(process);
+            _watch?.Remove(process.Id);
 
             // A pump can outlive the run, reading from a descendant that kept the pipe open, and
             // the caller has moved on: nothing it reads from here on is part of this run.
@@ -203,6 +223,9 @@ public sealed class ProcessRunner : IProcessRunner
             }
         }
     }
+
+    private static AgentException NotCovered(string name, Exception ex)
+        => new($"Did not run '{name}': Relay could not make sure it stops when Relay does ({ex.Message}).", ex) { PromptMayHaveBeenRead = false };
 
     private static string Describe(TimeSpan duration) => duration switch
     {

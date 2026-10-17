@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Relay.Cli.Approvals;
+using Relay.Cli.Infrastructure;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
@@ -257,10 +258,7 @@ internal sealed class StartCommand(
 
     private static ApprovalTool ApprovalToolFor(string pipeName, string folder)
     {
-        var host = Environment.ProcessPath!;
-        IReadOnlyList<string> arguments = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
-            ? [typeof(StartCommand).Assembly.Location, ApprovalBridge.Command, pipeName]
-            : [ApprovalBridge.Command, pipeName];
+        var (host, arguments) = RelayExecutable.With(ApprovalBridge.Command, pipeName);
         return new ApprovalTool(host, arguments, folder);
     }
 

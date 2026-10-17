@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Relay.Agents;
+using Relay.Agents.Processes;
 using Relay.Cli.Approvals;
 using Relay.Cli.Commands;
 using Relay.Cli.Infrastructure;
@@ -18,10 +19,15 @@ using Spectre.Console.Cli;
 if (args is [ApprovalBridge.Command, var pipe])
     return await ApprovalBridge.RunAsync(pipe, Console.OpenStandardInput(), Console.OpenStandardOutput());
 
+// Started by Relay itself on macOS and Linux, to stop the agents if Relay is killed.
+if (args is [AgentWatcher.Command])
+    return await AgentWatcher.RunAsync(Console.OpenStandardInput());
+
 Console.OutputEncoding = Encoding.UTF8;
 
+var (relay, watcherArguments) = RelayExecutable.With(AgentWatcher.Command);
 var services = new ServiceCollection()
-    .AddRelayAgents()
+    .AddRelayAgents(new ProcessRequest(relay, watcherArguments))
     .AddSingleton<AgentDiscoveryService>()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
     .AddSingleton<MessageRouter>()
