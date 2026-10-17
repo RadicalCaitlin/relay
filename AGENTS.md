@@ -173,7 +173,10 @@ and update it in the same change.
   entries from the `PATH` the child inherits.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.
 - When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
-  cancelled first, so no agent process outlives Relay. A forced kill of Relay cannot be handled.
+  cancelled first, so no agent process outlives Relay. On Windows a forced kill is covered too:
+  `ProcessRunner` puts Relay in `KillOnExitJob` before it starts anything, and Windows kills the
+  job's processes when Relay ends. If Relay cannot join the job, no process is started. On macOS
+  and Linux a forced kill of Relay is not handled yet.
 - Never log, print, or persist environment variables, tokens, or credentials. Never read an
   agent's credential files.
 - Never commit a secret, including in tests: build fake credentials at run time rather than

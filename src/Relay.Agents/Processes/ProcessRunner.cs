@@ -60,6 +60,20 @@ public sealed class ProcessRunner : IProcessRunner
             startInfo.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
 
         var name = Path.GetFileNameWithoutExtension(request.FileName);
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                KillOnExitJob.Join();
+            }
+            catch (Win32Exception ex)
+            {
+                // Started anyway, the agent would keep running if Relay were killed.
+                throw new AgentException(
+                    $"Did not start '{name}': Relay could not make sure it stops when Relay does ({ex.Message}).", ex) { PromptMayHaveBeenRead = false };
+            }
+        }
+
         using var process = new Process { StartInfo = startInfo };
         try
         {
