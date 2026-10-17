@@ -35,6 +35,8 @@ public abstract class CliAgentProvider(IExecutableLocator locator, IProcessRunne
 
     public virtual bool CanAskForApproval => false;
 
+    public virtual bool HasAutoMode => false;
+
     /// <summary>Called once before a session's first turn, for anything the CLI needs on disk.</summary>
     protected virtual void Prepare(AgentSessionOptions options)
     {

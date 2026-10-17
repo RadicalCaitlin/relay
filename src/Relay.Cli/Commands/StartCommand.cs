@@ -144,6 +144,8 @@ internal sealed class StartCommand(
     private string? _turnTimeout;
     private string _workspace = string.Empty;
     private bool _pause;
+    // Read by a session when its turn starts, on whichever thread runs it.
+    private volatile bool _auto;
     private Task<TypedInput?>? _read;
     private bool _readInterrupted;
     private bool _readWithdrawn;
@@ -214,7 +216,7 @@ internal sealed class StartCommand(
             }
 
             var options = new AgentSessionOptions(workspace, trust.Trusted,
-                approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!), turnTimeout);
+                approvals is null ? null : ApprovalToolFor(approvals.PipeName, _approvalFolder!), turnTimeout, () => _auto);
             foreach (var agent in agents)
                 room.AddParticipant(AgentParticipant.Create(agent, options));
 
@@ -329,6 +331,9 @@ internal sealed class StartCommand(
                 // Never a toggle either, for the same reason.
                 case "/approvals":
                     console.MarkupLine($"[dim]{DescribeApprovals(room)}{(_desk is null ? string.Empty : " Use /approvals on or /approvals off.")}[/]");
+                    // So the user knows why so few questions come.
+                    if (_auto)
+                        console.MarkupLine($"[dim]{DescribeAuto(room)}[/]");
                     break;
                 case "/approvals on" or "/approvals off" when _desk is null:
                     console.MarkupLine($"[yellow]{DescribeApprovals(room)}[/]");
@@ -343,6 +348,22 @@ internal sealed class StartCommand(
                     break;
                 case var command when command.StartsWith("/approvals "):
                     console.MarkupLine($"[yellow]{DescribeApprovals(room)} Use /approvals on or /approvals off.[/]");
+                    break;
+                // Never a toggle either. Commands are only read between turns, so a change always
+                // applies from the next one and never to a turn or an exchange in progress.
+                case "/auto":
+                    console.MarkupLine($"[dim]{DescribeAuto(room)} Use /auto on or /auto off.[/]");
+                    break;
+                case "/auto on":
+                    _auto = true;
+                    console.MarkupLine($"[dim]{DescribeAuto(room)}[/]");
+                    break;
+                case "/auto off":
+                    _auto = false;
+                    console.MarkupLine($"[dim]{DescribeAuto(room)}[/]");
+                    break;
+                case var command when command.StartsWith("/auto "):
+                    console.MarkupLine($"[yellow]Auto mode is still {(_auto ? "on" : "off")}. Use /auto on or /auto off.[/]");
                     break;
                 case "/role":
                     WriteRoles(room);
@@ -407,7 +428,13 @@ internal sealed class StartCommand(
                         ? $"[dim]Waiting for {name}... (turn {starting.Turn} of {starting.TurnLimit}, Ctrl+C to stop the exchange)[/]"
                         : $"[dim]Waiting for {name}... (Ctrl+C to cancel)[/]");
                 },
-                Activity = (_, activity) => WriteActivity(activity),
+                Activity = (agent, activity) =>
+                {
+                    if (activity.Kind == AgentActivityKind.Mode)
+                        WarnIfNotAuto(agent, activity.Text);
+                    else
+                        WriteActivity(activity);
+                },
                 Recorded = message => WriteMessage(room, message),
                 Pause = _pause
                     ? (handover, addressee) =>
@@ -494,6 +521,31 @@ internal sealed class StartCommand(
             ? $"Approvals are on: {asking} asks you before a step its own settings do not allow, and can ask you questions."
             : "Approvals are on, but no agent here can ask.";
         return silent.Length > 0 ? $"{asks} {silent} cannot ask: a step its own settings do not allow is refused." : asks;
+    }
+
+    private string DescribeAuto(ChatRoom room)
+    {
+        var connected = room.Participants.Where(p => p.Session is not null).ToList();
+        var auto = string.Join(" and ", connected.Where(p => p.HasAutoMode).Select(p => Markup.Escape(p.DisplayName)));
+        if (auto.Length == 0)
+            return "Auto mode is not available: no agent here has one.";
+
+        var without = string.Join(" and ", connected.Where(p => !p.HasAutoMode).Select(p => Markup.Escape(p.DisplayName)));
+        var unchanged = without.Length > 0 ? $" {without} has no auto mode and is unchanged." : string.Empty;
+        return _auto
+            ? $"Auto mode is on: {auto} runs each turn in its own auto mode, where its classifier decides the steps its settings do not, and only what it will not decide is put to you.{unchanged}"
+            : $"Auto mode is off: {auto}'s own settings decide which steps it may take.{unchanged}";
+    }
+
+    // The mode comes from the agent's own output, so it is shown only through SafeLine and is never
+    // acted on beyond saying so. With auto mode off the agent's settings decide, and nothing is said.
+    private void WarnIfNotAuto(AgentParticipant agent, string mode)
+    {
+        if (!_auto || !agent.HasAutoMode || mode == "auto")
+            return;
+
+        lock (_writing)
+            console.MarkupLine($"[yellow]  ! {Markup.Escape(agent.DisplayName)} could not use auto mode and is running this turn in {RelayConsole.SafeLine(mode)} mode, so steps its own settings do not allow are put to you, or refused if nobody can be asked.[/]");
     }
 
     // A read of the console cannot be abandoned. One that was interrupted is kept, and the line it
@@ -763,6 +815,8 @@ internal sealed class StartCommand(
             console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
         else if (_noApprovals != NoTerminal)
             console.MarkupLine($"[yellow]{DescribeApprovals(room)}[/]");
+        if (room.Participants.Any(p => p.HasAutoMode && p.Session is not null))
+            console.MarkupLine($"[dim]{DescribeAuto(room)}{(_auto ? string.Empty : " /auto on lets it decide those steps itself.")}[/]");
         if (_turnTimeout is not null)
             console.MarkupLine($"[dim]An agent whose turn runs longer than {Markup.Escape(_turnTimeout)} is stopped.[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
@@ -779,6 +833,7 @@ internal sealed class StartCommand(
         console.MarkupLine("[bold]/reset[/]     Start new agent conversations from a clean slate (/reset <agent> for one)");
         console.MarkupLine($"[bold]/pause[/]     Ask before one agent's message is passed to another: /pause on or /pause off (now {(_pause ? "on" : "off")})");
         console.MarkupLine($"[bold]/approvals[/] Be asked before a step an agent's own settings do not allow: /approvals on or /approvals off (now {(_desk is null ? "not available" : _desk.Enabled ? "on" : "off")})");
+        console.MarkupLine($"[bold]/auto[/]      Let Claude decide the steps its settings do not, in its own auto mode: /auto on or /auto off (now {(_auto ? "on" : "off")})");
         console.MarkupLine("[bold]/role[/]      Show each agent's role; /role <agent> <role> gives one, /role <agent> <name>: <description> one of your own, /role <agent> none removes it");
         console.MarkupLine("[bold]/exit[/]      Leave the chatroom");
         foreach (var participant in room.Participants)

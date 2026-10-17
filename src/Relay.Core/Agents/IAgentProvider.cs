@@ -18,6 +18,12 @@ public interface IAgentProvider
     /// such a step by its own CLI, as before.
     /// </summary>
     bool CanAskForApproval => false;
+
+    /// <summary>
+    /// Whether this agent has a mode of its own in which it decides the steps its settings do not,
+    /// which the user can switch it into with <see cref="AgentSessionOptions.AutoMode"/>.
+    /// </summary>
+    bool HasAutoMode => false;
 }
 
 /// <param name="WorkingDirectory">The directory the agent runs in.</param>
@@ -32,7 +38,11 @@ public interface IAgentProvider
 /// <param name="TurnTimeout">
 /// How long one turn may run before the agent is stopped. Null for no limit.
 /// </param>
-public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false, ApprovalTool? ApprovalTool = null, TimeSpan? TurnTimeout = null);
+/// <param name="AutoMode">
+/// Asked when each turn starts: whether the user has switched the agent into its own auto mode.
+/// Null, or false, leaves the agent's own settings to decide its mode.
+/// </param>
+public sealed record AgentSessionOptions(string WorkingDirectory, bool TrustWorkspace = false, ApprovalTool? ApprovalTool = null, TimeSpan? TurnTimeout = null, Func<bool>? AutoMode = null);
 
 /// <summary>
 /// A program that speaks the Model Context Protocol over its standard streams and offers one tool,
