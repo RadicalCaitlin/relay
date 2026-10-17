@@ -33,13 +33,11 @@ public class PastedInputTests
 
     /// <summary>
     /// A keyboard whose lines arrive at times the test chooses. Looking to see whether a key is
-    /// waiting moves the clock on, as looking at a real keyboard takes time: that is the only
-    /// thing here that does, so nothing waits for real time.
+    /// waiting takes no time; the clock moves only where the reader waits between two looks, which
+    /// is what decides how often it can look at all.
     /// </summary>
     private sealed class Typist(TestClock clock, bool redirected, params Arrival[] arrivals) : IConsoleStreams
     {
-        private static readonly TimeSpan PerLook = TimeSpan.FromMilliseconds(5);
-
         private int _next;
         private TimeSpan _since;
 
@@ -47,14 +45,13 @@ public class PastedInputTests
 
         public bool IsOutputRedirected => false;
 
-        public bool InputWaiting
+        public bool InputWaiting => _next < arrivals.Length && _since >= arrivals[_next].After;
+
+        /// <summary>What a sleep of any length really costs: one tick of the system timer.</summary>
+        public void Tick(TimeSpan _)
         {
-            get
-            {
-                clock.Advance(PerLook);
-                _since += PerLook;
-                return _next < arrivals.Length && _since >= arrivals[_next].After;
-            }
+            clock.Advance(Tock);
+            _since += Tock;
         }
 
         public void DiscardPendingInput()
@@ -71,10 +68,15 @@ public class PastedInputTests
         }
     }
 
+    // Windows rounds a sleep up to the system timer tick unless something has raised the timer
+    // resolution, so the reader gets far fewer looks at the keyboard than it asks for.
+    private static readonly TimeSpan Tock = TimeSpan.FromMilliseconds(15.6);
+
     private static PastedInput Reader(params Arrival[] arrivals)
     {
         var clock = new TestClock();
-        return new PastedInput(new Typist(clock, redirected: false, arrivals), clock);
+        var typist = new Typist(clock, redirected: false, arrivals);
+        return new PastedInput(typist, clock, typist.Tick);
     }
 
     private static Arrival Together(string line) => new(line, TimeSpan.Zero);
@@ -112,6 +114,26 @@ public class PastedInputTests
     public async Task A_line_ending_in_a_backslash_waits_however_long_the_next_line_takes()
     {
         var reader = Reader(Together(@"first\"), new("second", TimeSpan.FromSeconds(30)));
+
+        Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
+    }
+
+    // Only the last line of what arrived can ask for another. Inside a paste a trailing backslash is
+    // the text's own, as in a shell command written over several lines.
+    [Fact(Timeout = Patience)]
+    public async Task A_backslash_inside_a_paste_is_kept()
+    {
+        var reader = Reader(Together(@"docker run \"), Together(@"  -it img \"), Together("  --rm"));
+
+        Assert.Equal(new TypedInput("docker run \\\n  -it img \\\n  --rm", 3), await ReadAsync(reader));
+    }
+
+    // The window is a number of looks at the keyboard, and a sleep of 1ms really lasts a timer tick.
+    // Giving up without looking once more splits a paste whose next line arrived during that tick.
+    [Fact(Timeout = Patience)]
+    public async Task A_line_arriving_between_two_timer_ticks_still_joins_the_message()
+    {
+        var reader = Reader(Together("first"), new("second", TimeSpan.FromMilliseconds(20)));
 
         Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
     }
@@ -163,9 +185,8 @@ public class PastedInputTests
     public async Task With_redirected_input_every_line_is_still_its_own_message()
     {
         var clock = new TestClock();
-        var reader = new PastedInput(
-            new Typist(clock, redirected: true, Together("first"), Together(@"second\"), Together("third")),
-            clock);
+        var typist = new Typist(clock, redirected: true, Together("first"), Together(@"second\"), Together("third"));
+        var reader = new PastedInput(typist, clock, typist.Tick);
 
         Assert.Equal(new TypedInput("first", 1), await ReadAsync(reader));
         Assert.Equal(new TypedInput(@"second\", 1), await ReadAsync(reader));

@@ -139,6 +139,24 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
+    // A blank line has always been skipped. A paste of nothing but blank lines is still nothing, and
+    // must not be recorded as a message every agent is later shown as catch-up.
+    [Fact(Timeout = Limit)]
+    public async Task A_paste_of_nothing_but_blank_lines_is_not_a_message()
+    {
+        var (_, running) = Start(new AskingProvider(_ => new FakeSession("thanks")));
+        await ReadsAsync(1);
+
+        _keyboard.Paste("", "   ", "");
+        await ReadsAsync(4);
+        _keyboard.Type("/history");
+        await ReadsAsync(5);
+
+        AssertNotShown("as one message", _console.Output);
+        Assert.Empty(Assert.Single(_rooms.Rooms).Messages);
+        await LeaveAsync(running);
+    }
+
     [Fact(Timeout = Limit)]
     public async Task A_command_on_any_line_but_the_first_of_a_paste_does_nothing()
     {

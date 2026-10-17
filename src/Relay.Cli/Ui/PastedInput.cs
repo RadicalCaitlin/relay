@@ -11,7 +11,9 @@ internal readonly record struct TypedInput(string Text, int Lines);
 /// a paste can only be recognised by the rest of it already waiting; a terminal that reports a
 /// bracketed paste needs the key-by-key editor of #40.
 /// </summary>
-internal sealed class PastedInput(IConsoleStreams streams, TimeProvider time)
+/// <param name="pause">How the wait between two looks at the keyboard is taken. A seam: a test
+/// moves its own clock on here, because this is where the time between polls passes.</param>
+internal sealed class PastedInput(IConsoleStreams streams, TimeProvider time, Action<TimeSpan>? pause = null)
 {
     /// <summary>
     /// How long after a line Relay keeps waiting for the rest of a paste. Codex CLI, which has the
@@ -37,15 +39,23 @@ internal sealed class PastedInput(IConsoleStreams streams, TimeProvider time)
         var line = first;
         while (true)
         {
-            // A line ending in backslash is a new line the user typed on purpose, so Relay waits for
-            // what follows however long it takes. The backslash itself is not part of the message.
-            var continued = line.EndsWith('\\');
-            if (continued)
-                line = line[..^1];
-
-            lines.Add(line);
-            if (!continued && !MoreIsArriving())
+            if (MoreIsArriving())
+            {
+                // More of what arrived together. A backslash ending a line inside a paste belongs to
+                // the text, as in a shell command written over several lines, so it is left alone.
+                lines.Add(line);
+            }
+            else if (line.EndsWith('\\'))
+            {
+                // The last line of what arrived, ending in a backslash: the user asking to carry the
+                // message on to the line they type next. The backslash itself is not part of it.
+                lines.Add(line[..^1]);
+            }
+            else
+            {
+                lines.Add(line);
                 break;
+            }
 
             // The end of input ends the block, including one a backslash promised more of.
             if (streams.ReadLine() is not { } next)
@@ -62,14 +72,15 @@ internal sealed class PastedInput(IConsoleStreams streams, TimeProvider time)
         var started = time.GetTimestamp();
         while (true)
         {
-            // Checked before the input is, so a line that only becomes available once the window has
-            // passed starts a message of its own.
-            if (time.GetElapsedTime(started) > Grace)
-                return false;
+            // Looked at before the window is tested, so the last look still counts. A sleep of 1ms
+            // lasts about a timer tick (15.6ms on Windows), so testing the window first would give
+            // up without looking again and split a paste whose next line arrived during the tick.
             if (streams.InputWaiting)
                 return true;
+            if (time.GetElapsedTime(started) > Grace)
+                return false;
 
-            Thread.Sleep(BetweenPolls);
+            (pause ?? Thread.Sleep)(BetweenPolls);
         }
     }
 }

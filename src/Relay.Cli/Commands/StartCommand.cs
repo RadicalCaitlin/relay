@@ -272,7 +272,9 @@ internal sealed class StartCommand(
             console.Markup("[bold green]You:[/] ");
             if (ReadLine() is not { } typed)
                 return;
-            if (typed.Text.Length == 0)
+            // A blank line has always been skipped, and a paste of nothing but blank lines is still
+            // nothing: it must not be recorded as a message for every agent to be shown.
+            if (string.IsNullOrWhiteSpace(typed.Text))
                 continue;
 
             // Only the first line decides what a message is, so a line of a paste is never run as a
@@ -355,8 +357,6 @@ internal sealed class StartCommand(
                 case var command when command.StartsWith("/restart "):
                     Reset(room, command["/restart ".Length..].Trim().TrimStart('@'), keepRoom: true);
                     break;
-                // A line whose first word is /word was meant as a command, with or without arguments, and a
-                // mistyped one must not be recorded for every agent to read. "/etc/hosts looks wrong" is a message.
                 case var command when IsCommand(command):
                     console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help. A line that starts with /word is never sent as a message.[/]");
                     break;

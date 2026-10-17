@@ -168,7 +168,9 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
         }
 
         var mentions = string.Join(' ', invited.Select(i => $"@{i.Agent.Id}"));
-        if (body.Length == 0)
+        // Whitespace is nothing to send, however many lines of it: the lines after a mention can be
+        // blank, and a turn spent on them costs the user and tells the agent nothing.
+        if (string.IsNullOrWhiteSpace(body))
             return End(StopReason.NotSent, $"Nothing to send. Try: {mentions} <message>");
 
         var inExchange = invited.Count > 1;

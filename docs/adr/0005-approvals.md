@@ -58,6 +58,13 @@ answers for the user, and an agent that cannot ask is run as before.**
 - **Only a typed yes allows.** `yes` or `y` allows; `no`, `n`, the end of input and Ctrl+C refuse;
   an empty line or anything else is asked again and is said not to have been sent to anyone. Keys
   pressed before the question was shown are thrown away first.
+- **Typed at this question, on one line.** Input that arrived as several lines at once was pasted,
+  not typed here, so the whole block is dropped — including a `yes` on its first line — and the
+  question is asked again. This covers the answer to a permission question and the answer to one of
+  Claude's own questions alike (#63). What Relay has to go on is timing, not a paste boundary the
+  terminal reports: lines already waiting, or arriving within 30ms, are one block. A paste delivered
+  more slowly splits, and its first line can then be read as an answer, so this narrows the window
+  rather than closing it. Closing it needs the key-by-key input editor (#40).
 - **The user is shown what will happen, not the agent's account of it.** Every field of the
   request is shown under its name. A command is shown in full, and a step whose command is too
   long to show in full (4,000 characters or 60 lines) is refused without asking. Other values are

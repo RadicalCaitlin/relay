@@ -80,6 +80,20 @@ public class MessageRouterTests
         Assert.Contains("fix this\n\n    indented\n", Assert.Single(claude.Received));
     }
 
+    // A mention and nothing else is refused on one line, and must be refused when the lines after it
+    // are blank too: starting a turn with whitespace costs the user a turn and tells the agent nothing.
+    [Fact]
+    public async Task A_mention_followed_by_blank_lines_sends_nothing()
+    {
+        var claude = AddAgent("claude");
+
+        var result = await _router.SendHumanMessageAsync(_room, "@claude\n\n");
+
+        Assert.Equal(StopReason.NotSent, result.Reason);
+        Assert.Empty(claude.Received);
+        Assert.Contains(_room.Messages, m => m.Content.Contains("Nothing to send. Try: @claude <message>"));
+    }
+
     // The break before a last line that is blank is the only one in the message, so reattaching the
     // lines after the first has to put it back even when there is nothing after it.
     [Fact]
