@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using Relay.Agents.Processes;
 using Relay.Core.Agents;
@@ -153,12 +154,18 @@ public sealed class ForcedExitTests : IDisposable
     [UnixFact]
     public async Task An_agent_runs_in_a_session_of_its_own()
     {
-        var result = await GuardedRunner().RunAsync(new ProcessRequest("sh", ["-c", "echo $$ $(ps -o sid= -p $$)"]));
+        bool? leadsSession = null;
+        // Asked while it is still running, after it has said who it is.
+        await GuardedRunner().RunAsync(new ProcessRequest("sh", ["-c", "echo $$; sleep 1"])
+        {
+            OnOutputLine = line => leadsSession = getsid(int.Parse(line)) == int.Parse(line),
+        });
 
-        var ids = result.StandardOutput.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Assert.Equal(2, ids.Length);
-        Assert.Equal(ids[0], ids[1]);
+        Assert.True(leadsSession);
     }
+
+    [DllImport("libc")]
+    private static extern int getsid(int pid);
 
     [UnixFact]
     public async Task An_agent_that_cannot_be_run_is_reported_with_the_reason()
