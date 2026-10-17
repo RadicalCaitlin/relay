@@ -29,15 +29,22 @@ public interface IProcessRunner
     Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default);
 }
 
-public sealed class ProcessRunner : IProcessRunner
+/// <param name="relay">
+/// How to start this same Relay. On macOS and Linux each process then starts in a process group of
+/// its own, and <see cref="AgentWatcher"/> stops those groups if Relay is killed. Windows uses
+/// <see cref="KillOnExitJob"/> instead and ignores it.
+/// </param>
+public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KillGrace = TimeSpan.FromSeconds(5);
 
+    private readonly AgentWatch? _watch = OperatingSystem.IsWindows() || relay is null ? null : new(relay);
+
     public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(request.FileName)
+        var startInfo = new ProcessStartInfo(_watch?.Relay.FileName ?? request.FileName)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -49,6 +56,14 @@ public sealed class ProcessRunner : IProcessRunner
             CreateNoWindow = true,
             WorkingDirectory = request.WorkingDirectory ?? string.Empty,
         };
+        if (_watch is not null)
+        {
+            foreach (var argument in _watch.Relay.Arguments)
+                startInfo.ArgumentList.Add(argument);
+            startInfo.ArgumentList.Add(AgentWatcher.SessionCommand);
+            // A relative path is meant from Relay's working directory, but agent-session runs in the agent's.
+            startInfo.ArgumentList.Add(request.FileName.Contains('/') ? Path.GetFullPath(request.FileName) : request.FileName);
+        }
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
 
@@ -60,14 +75,43 @@ public sealed class ProcessRunner : IProcessRunner
             startInfo.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
 
         var name = Path.GetFileNameWithoutExtension(request.FileName);
-        using var process = new Process { StartInfo = startInfo };
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                KillOnExitJob.Join();
+            }
+            catch (Win32Exception ex)
+            {
+                // Started anyway, the agent would keep running if Relay were killed.
+                throw NotCovered(name, ex);
+            }
+        }
+
+        var process = new Process { StartInfo = startInfo };
         try
         {
             process.Start();
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
+            process.Dispose();
             throw new AgentException($"Could not start '{name}': {ex.Message}", ex) { PromptMayHaveBeenRead = false };
+        }
+
+        if (_watch is not null)
+        {
+            try
+            {
+                _watch.Add(process);
+            }
+            catch (IOException ex)
+            {
+                // Nothing has been written to it yet, so it has read nothing.
+                await KillAsync(process);
+                Release(process);
+                throw NotCovered(name, ex);
+            }
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -93,7 +137,11 @@ public sealed class ProcessRunner : IProcessRunner
             {
             }
 
-            return new(process.ExitCode, Snapshot(output), Snapshot(error));
+            var standardError = Snapshot(error);
+            if (_watch is not null && process.ExitCode == AgentWatcher.ExecFailedExitCode && standardError.StartsWith(AgentWatcher.ExecFailed, StringComparison.Ordinal))
+                throw new AgentException($"Could not start '{name}': {standardError[AgentWatcher.ExecFailed.Length..].Trim()}") { PromptMayHaveBeenRead = false };
+
+            return new(process.ExitCode, Snapshot(output), standardError);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -108,7 +156,31 @@ public sealed class ProcessRunner : IProcessRunner
             // A pump can outlive the run, reading from a descendant that kept the pipe open, and
             // the caller has moved on: nothing it reads from here on is part of this run.
             lines?.Stop();
+            Release(process);
         }
+    }
+
+    /// <summary>
+    /// Tells the watcher an agent has finished once it has, and not before: a kill can fail or time
+    /// out, and an agent still running must stay on the list, but an id left on it after the agent
+    /// exits could be given to another process.
+    /// </summary>
+    private void Release(Process process)
+    {
+        if (!process.HasExited)
+        {
+            _ = ReleaseWhenExitedAsync(process);
+            return;
+        }
+
+        _watch?.Remove(process.Id);
+        process.Dispose();
+    }
+
+    private async Task ReleaseWhenExitedAsync(Process process)
+    {
+        await process.WaitForExitAsync();
+        Release(process);
     }
 
     private static async Task PumpAsync(StreamReader reader, StringBuilder sink, OutputLines? lines = null)
@@ -190,6 +262,9 @@ public sealed class ProcessRunner : IProcessRunner
         }
     }
 
+    private static AgentException NotCovered(string name, Exception ex)
+        => new($"Did not run '{name}': Relay could not make sure it stops when Relay does ({ex.Message}).", ex) { PromptMayHaveBeenRead = false };
+
     private static string Describe(TimeSpan duration) => duration switch
     {
         { TotalHours: >= 1 } when duration.Minutes == 0 && duration.Seconds == 0 => Plural((int)duration.TotalHours, "hour"),
@@ -220,15 +295,19 @@ public sealed class ProcessRunner : IProcessRunner
         }
     }
 
-    private static async Task KillAsync(Process process)
+    private async Task KillAsync(Process process)
     {
+        // What the agent left in its session when the process that started it exited is not in its
+        // tree, and without a terminal of its own the session gets no Ctrl+C or hangup from it either.
+        if (_watch is not null)
+            ProcessKill.Group(process.Id);
+        ProcessKill.Tree(process);
+
         try
         {
-            // The CLI is often a shim (cmd/node/sh) around the real process, so kill the whole tree.
-            process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync().WaitAsync(KillGrace);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or AggregateException or TimeoutException)
+        catch (TimeoutException)
         {
             // Best effort: a failed kill must not replace the cancellation or error already in flight.
         }

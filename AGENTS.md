@@ -24,7 +24,8 @@ Boundaries that must hold:
 
 - `Relay.Core` has no package dependencies and knows nothing about processes, CLIs, or the console.
 - `Relay.Agents` never references `Relay.Cli` and never writes to the console.
-- `System.Diagnostics.Process` is used only in `Relay.Agents/Processes/ProcessRunner.cs`.
+- `System.Diagnostics.Process` is used only in `Relay.Agents/Processes`: `ProcessRunner.cs` runs
+  agents, and `AgentWatcher.cs` starts and runs the watcher that stops them if Relay is killed.
 
 Key types:
 
@@ -200,7 +201,18 @@ and update it in the same change.
   entries from the `PATH` the child inherits.
 - Every process run must be cancellable and must kill the whole process tree on cancellation.
 - When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
-  cancelled first, so no agent process outlives Relay. A forced kill of Relay cannot be handled.
+  cancelled first, so no agent process outlives Relay. A forced kill is covered too. On Windows
+  `ProcessRunner` puts Relay in `KillOnExitJob` before it starts anything, and Windows kills the
+  job's processes when Relay ends. On macOS and Linux `ProcessRunner` starts each agent through
+  `relay agent-session`, which gives it a session and process group of its own, with no terminal,
+  before it becomes the agent. It then tells `relay agent-watcher` (`AgentWatcher`) the agent's id
+  and the time it started it, and tells it again once the agent has exited. When its input ends,
+  which is when Relay ends, the watcher kills the group of every agent still running. A watcher
+  that dies is replaced at once and told every agent still running. If Relay cannot join the job
+  or tell a watcher, the agent is not run. The watcher writes nothing, decides nothing, and
+  ignores the signals a terminal sends to Relay, so it leaves only after Relay has. The terminal's
+  Ctrl+C and hangup reach only Relay, so cancelling a run kills the agent's group as well as its
+  tree. A tool that asks on the terminal (an ssh passphrase, sudo) fails at once.
 - Never log, print, or persist environment variables, tokens, or credentials. Never read an
   agent's credential files.
 - Never commit a secret, including in tests: build fake credentials at run time rather than
