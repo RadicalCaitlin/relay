@@ -215,8 +215,9 @@ and update it in the same change.
 - Activity is for the user's eyes only. Never record it in the room, never include it in what an
   agent is sent, and never act on it: a reported refusal is shown, not approved or retried. Print
   it through `RelayConsole.ActivityLine`, which keeps each item to one short line. The one kind
-  not printed as a step is `AgentActivityKind.Mode`: `StartCommand` only says when Claude could not
-  use auto mode, printing the mode through `RelayConsole.SafeLine`.
+  not printed as a step is `AgentActivityKind.Mode`: `StartCommand` only says, once per message,
+  when Claude could not use auto mode or did not report a mode, printing the mode through
+  `RelayConsole.ActivityLine` like any other activity.
 - `ParseActivity` runs on every line an agent CLI prints, as it prints it. It must cope with any
   text and never throw.
 - Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.

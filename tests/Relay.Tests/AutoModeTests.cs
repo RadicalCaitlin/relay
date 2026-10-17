@@ -85,9 +85,9 @@ public sealed class AutoModeTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "/auto", "/auto on", "/auto", "/auto maybe", "/auto off", "/auto", "/history", "/exit");
 
-        AssertShown("Auto mode is off: Claude's own settings decide which steps it may take. /auto on lets it decide those steps itself.", output);
-        AssertShown("Auto mode is off: Claude's own settings decide which steps it may take. Use /auto on or /auto off.", output);
-        AssertShown("Auto mode is on: Claude runs each turn in its own auto mode", output);
+        AssertShown("Auto mode is off for Claude: its own settings decide which steps it may take. Type /auto on to switch it on.", output);
+        AssertShown("Auto mode is off for Claude: its own settings decide which steps it may take. Use /auto on or /auto off.", output);
+        AssertShown("Auto mode is on for Claude: its classifier decides the steps its settings leave open", output);
         AssertShown("Auto mode is still on. Use /auto on or /auto off.", output);
         AssertNotShown("You: /auto", output);
         AssertNotShown("Recorded.", output);
@@ -107,8 +107,82 @@ public sealed class AutoModeTests : IDisposable
         Assert.Contains("--permission-mode auto", claude[1]);
         Assert.DoesNotContain("--permission-mode", claude[2]);
         Assert.DoesNotContain(_harness.Invocations("codex"), turn => turn.Contains("permission"));
-        AssertShown("Codex has no auto mode and is unchanged.", output);
+        AssertShown("Not affected, having no auto mode: Codex.", output);
         AssertNotShown("could not use auto mode", output);
+        AssertNotShown("did not say which mode", output);
+    }
+
+    // With both agents in the room, the header must not read as if /auto on changed Codex.
+    [Fact]
+    public async Task The_header_names_the_agent_auto_mode_is_for()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+        _harness.InstallAgent("codex", CodexReply("unused"));
+
+        var output = await _harness.ChatAsync(["start"], "/exit");
+
+        AssertShown("Auto mode is off for Claude: its own settings decide which steps it may take. Not affected, having no auto mode: Codex. Type /auto on to switch it on.", output);
+    }
+
+    [Fact]
+    public async Task Auto_mode_stays_off_in_a_room_where_no_agent_has_one()
+    {
+        _harness.InstallAgent("codex", CodexReply("pong"));
+
+        var output = await _harness.ChatAsync(["start", "--agents", "codex"], "/auto on", "/help", "/approvals", "/exit");
+
+        AssertShown("Auto mode is not available: no agent here has one.", output);
+        AssertShown("(now off)", output);
+        AssertNotShown("(now on)", output);
+        AssertNotShown("Auto mode is on", output);
+    }
+
+    [Fact]
+    public async Task A_reply_with_no_mode_reported_is_said_to_be_unconfirmed_only_while_auto_mode_is_on()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+
+        var off = await _harness.ChatAsync(["start"], "@claude one", "/exit");
+        var on = await _harness.ChatAsync(["start"], "/auto on", "@claude two", "/exit");
+
+        AssertNotShown("did not say which mode", off);
+        AssertShown("! Claude did not say which mode it ran this turn in, so Relay cannot tell whether it used auto mode", on);
+    }
+
+    [Fact]
+    public async Task A_turn_that_fails_says_nothing_about_the_mode_but_suggests_auto_off()
+    {
+        _harness.InstallAgent("claude", string.Empty, "error: option '--permission-mode <mode>' argument 'auto' is invalid.", exitCode: 1);
+
+        var off = await _harness.ChatAsync(["start"], "@claude one", "/exit");
+        var on = await _harness.ChatAsync(["start"], "/auto on", "@claude two", "/exit");
+
+        AssertNotShown("may be too old to have an auto mode", off);
+        AssertShown("If this began after /auto on, your Claude may be too old to have an auto mode: /auto off runs it as before.", on);
+        AssertNotShown("did not say which mode", on);
+    }
+
+    [Fact]
+    public async Task The_warning_is_given_once_however_many_turns_claude_takes_in_an_exchange()
+    {
+        _harness.InstallAgent("claude", ClaudeStartedIn("default", @"@codex\nyour turn"));
+        _harness.InstallAgent("codex", CodexReply(@"@claude\nback to you"));
+
+        var output = await _harness.ChatAsync(["start"], "/auto on", "@claude @codex go", "/exit");
+
+        Assert.True(_harness.Invocations("claude").Count > 1, output);
+        Assert.Single(Squash(output).Split(Squash("could not use auto mode")).Skip(1));
+    }
+
+    [Fact]
+    public async Task A_long_mode_is_cut_short_like_any_other_activity()
+    {
+        _harness.InstallAgent("claude", ClaudeStartedIn(new string('x', 5000)));
+
+        var output = await _harness.ChatAsync(["start"], "/auto on", "@claude hi", "/exit");
+
+        AssertShown("could not use auto mode and ran this turn in", output);
+        AssertNotShown(new string('x', 201), output);
     }
 
     [Fact]
@@ -120,7 +194,7 @@ public sealed class AutoModeTests : IDisposable
         var on = await _harness.ChatAsync(["start"], "/auto on", "@claude two", "/exit");
 
         AssertNotShown("could not use auto mode", off);
-        AssertShown("! Claude could not use auto mode and is running this turn in default mode", on);
+        AssertShown("! Claude could not use auto mode and ran this turn in default mode", on);
         // The mode itself is never shown as a step the agent took.
         AssertNotShown("- default", off);
         AssertNotShown("- auto", on);
@@ -133,7 +207,7 @@ public sealed class AutoModeTests : IDisposable
 
         var output = await _harness.ChatAsync(["start"], "/auto on", "@claude hi", "/exit");
 
-        AssertShown("running this turn in [red]x[/][2J mode", output);
+        AssertShown("ran this turn in [red]x[/][2J mode", output);
         Assert.DoesNotContain('\u001b', output);
     }
 
@@ -157,6 +231,6 @@ public sealed class AutoModeTests : IDisposable
 
         AssertShown("/auto Let Claude decide the steps its settings do not, in its own auto mode: /auto on or /auto off (now off)", output);
         AssertShown("(now on)", output);
-        Assert.True(Squash(output).Split(Squash("Auto mode is on: Claude runs each turn")).Length - 1 >= 2, output);
+        Assert.True(Squash(output).Split(Squash("Auto mode is on for Claude:")).Length - 1 >= 2, output);
     }
 }

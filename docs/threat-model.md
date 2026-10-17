@@ -304,7 +304,8 @@ classifier, then decides the steps Claude's settings leave open, instead of you.
   and pause mode off, you are trusting the classifier with what one agent asks another to do.
   `/pause on` puts every handover in front of you first.
 - **What Claude ran in is shown.** Where auto mode is not available to Claude, it runs the turn in
-  another mode, and Relay says so.
+  another mode, and Relay says so. Where Claude does not say which mode it ran in, Relay says it
+  cannot tell, rather than assume auto mode was used.
 - **Codex is not affected.** It has no auto mode Relay can pass.
 
 ## Secrets and logging

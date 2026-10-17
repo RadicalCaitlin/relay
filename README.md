@@ -255,8 +255,10 @@ thing yourself; you can switch as often as you like, between turns.
   something hostile put Claude up to, but it can be wrong. With agents passing work to each other,
   `/pause on` lets you read each handover first. See [docs/threat-model.md](docs/threat-model.md).
 - **Claude only.** Codex has no auto mode Relay can switch on.
-- **Not always available.** Auto mode depends on your plan, model and settings. When Claude cannot
-  use it, Relay says so for that turn, and steps are put to you as before.
+- **Not always available.** Auto mode depends on your plan, model and settings, and on a Claude
+  Code version that has it. When Claude cannot use it, or does not say which mode it ran in, Relay
+  says so once for that message, and steps may be put to you as before. A Claude Code from before
+  auto mode fails every turn instead; `/auto off` puts it back.
 - Each step the classifier reviews is a model call on your account.
 
 See [docs/adr/0006-claude-auto-mode.md](docs/adr/0006-claude-auto-mode.md) for the design.

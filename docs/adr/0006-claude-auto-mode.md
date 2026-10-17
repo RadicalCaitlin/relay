@@ -52,8 +52,11 @@ still reaches the user through ADR 0005.**
 - **Off means unchanged.** With auto mode off, Relay passes no permission mode, exactly as before,
   and Claude's own settings decide the mode.
 - **Relay reports what Claude ran in.** The mode is taken from the run's `init` event. When auto
-  mode was asked for and Claude reports another mode, Relay says that auto mode was not available
-  and that steps will be put to the user.
+  mode was asked for and Claude reports another mode, or replies without reporting one, Relay says
+  so, once per message the user sends, and that steps may be put to the user. A Claude Code from
+  before auto mode rejects the argument and the turn fails; the failure then suggests `/auto off`.
+- **Only where it means something.** `/auto on` in a room with no agent that has an auto mode
+  says so and leaves it off.
 - **Claude only.** Codex has no equivalent that Relay can pass, and its own sandbox and approval
   settings already decide (ADR 0005). `/auto` says so.
 - **Seen in the header and in `/approvals`**, so the user knows that few questions will come.
