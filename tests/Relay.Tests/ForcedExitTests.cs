@@ -347,10 +347,23 @@ public sealed class ForcedExitTests : IDisposable
         {
             await Poll.UntilAsync(() => !Poll.IsRunning(child), "the agent's child process is gone", timeoutSeconds: 10);
         }
+        catch (Xunit.Sdk.XunitException) when (!OperatingSystem.IsWindows())
+        {
+            // What was left, with its parent and group, says which part of the cleanup failed.
+            Assert.Fail($"The agent's child process {child} is still running.\n{await ProcessListAsync()}");
+        }
         finally
         {
             if (Poll.IsRunning(child))
                 Process.GetProcessById(child).Kill();
         }
+    }
+
+    private static async Task<string> ProcessListAsync()
+    {
+        var startInfo = new ProcessStartInfo("ps", ["-A", "-o", "pid,ppid,pgid,stat,command"]) { RedirectStandardOutput = true, UseShellExecute = false };
+        using var ps = Process.Start(startInfo)!;
+        var lines = (await ps.StandardOutput.ReadToEndAsync()).Split('\n');
+        return string.Join('\n', lines.Where((line, index) => index == 0 || line.Contains("relay") || line.Contains("sleep") || line.Contains("sh ")));
     }
 }
