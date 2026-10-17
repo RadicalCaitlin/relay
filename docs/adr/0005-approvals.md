@@ -54,7 +54,8 @@ answers for the user, and an agent that cannot ask is run as before.**
   settings allow happens without a question, what they deny is denied, and only what would have
   prompted reaches the user.
 - **One step, once.** The answer covers the step shown and nothing after it. Relay does not offer
-  to remember an answer, and ignores Claude Code's suggestions for rules that would.
+  to remember an answer, and ignores Claude Code's suggestions for rules that would. To be asked
+  less, the user can switch Claude into its own auto mode (ADR 0006).
 - **Only a typed yes allows.** `yes` or `y` allows; `no`, `n`, the end of input and Ctrl+C refuse;
   an empty line or anything else is asked again and is said not to have been sent to anyone. Keys
   pressed before the question was shown are thrown away first.

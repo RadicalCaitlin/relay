@@ -81,6 +81,7 @@ Inside the chatroom:
 | `/reset <agent>`    | The same for one agent: it is shown nothing said before the reset |
 | `/pause on`, `/pause off` | Pause mode: ask before one agent's message is passed to another. `/pause` alone shows which it is |
 | `/approvals on`, `/approvals off` | Be asked before a step an agent's own settings do not allow. `/approvals` alone shows which it is |
+| `/auto on`, `/auto off` | Run Claude in its own auto mode from the next turn, so it asks you far less (see below). `/auto` alone shows which it is |
 | `/role`             | Show each agent's role and the roles available     |
 | `/role <agent> <role>` | Give an agent a role: `implementer`, `reviewer`, `architect` or `coordinator` |
 | `/role <agent> <name>: <description>` | Give an agent a role of your own       |
@@ -225,7 +226,8 @@ Claude: Saved the date to today.txt.
 ```
 
 - **A yes is for that one step.** Relay does not remember it and never changes an agent's
-  settings. To stop being asked about something, allow it in the agent's own settings.
+  settings. To stop being asked about something, allow it in the agent's own settings, or switch
+  Claude into its auto mode (below).
 - **Only `yes` or `y` allows.** `no` refuses, and Claude is told. An empty line, or anything else,
   is asked again and is not sent to anyone.
 - **Read the command, not the description.** The description is the agent's own. A command is
@@ -239,6 +241,27 @@ Claude: Saved the date to today.txt.
   the step is refused, as before. Codex cannot ask: a step its own settings do not allow fails.
 
 See [docs/adr/0005-approvals.md](docs/adr/0005-approvals.md) for the design.
+
+### Auto mode
+
+Being asked about every step soon gets in the way. `/auto on` runs Claude in Claude Code's own
+auto mode from its next turn: a classifier model decides the steps Claude's settings leave open,
+and only what it will not decide is put to you. `/auto off` goes back, for example to approve one
+thing yourself; you can switch as often as you like, between turns.
+
+- **Your rules still hold.** A deny rule still denies, and an ask rule, such as one for
+  `gh pr merge`, still asks you.
+- **It is a trade.** The classifier is meant to block steps that go beyond your request or that
+  something hostile put Claude up to, but it can be wrong. With agents passing work to each other,
+  `/pause on` lets you read each handover first. See [docs/threat-model.md](docs/threat-model.md).
+- **Claude only.** Codex has no auto mode Relay can switch on.
+- **Not always available.** Auto mode depends on your plan, model and settings, and on a Claude
+  Code version that has it. When Claude cannot use it, or does not say which mode it ran in, Relay
+  says so once for that message, and steps may be put to you as before. A Claude Code from before
+  auto mode fails every turn instead; `/auto off` puts it back.
+- Each step the classifier reviews is a model call on your account.
+
+See [docs/adr/0006-claude-auto-mode.md](docs/adr/0006-claude-auto-mode.md) for the design.
 
 ### Folder trust
 
@@ -266,7 +289,7 @@ See [docs/threat-model.md](docs/threat-model.md) for the full security model and
 
 | Agent        | Discovery | Chat | How Relay talks to it                                                  |
 | ------------ | --------- | ---- | ---------------------------------------------------------------------- |
-| Claude Code  | yes       | yes  | `claude -p --output-format stream-json --verbose`, continued with `--resume <id>`. In a terminal, also `--mcp-config <file> --permission-prompt-tool <tool>`, so it can ask you |
+| Claude Code  | yes       | yes  | `claude -p --output-format stream-json --verbose`, continued with `--resume <id>`. In a terminal, also `--mcp-config <file> --permission-prompt-tool <tool>`, so it can ask you. With `/auto on`, also `--permission-mode auto` |
 | OpenAI Codex | yes       | yes  | `codex exec --json -`, continued with `codex exec resume <id> --json -` |
 
 Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.0 on Windows.

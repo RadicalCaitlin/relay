@@ -10,6 +10,9 @@ public enum AgentActivityKind
 
     /// <summary>A step that was refused or that failed.</summary>
     Problem,
+
+    /// <summary>The permission mode the agent says it is running this turn in, such as <c>auto</c>.</summary>
+    Mode,
 }
 
 /// <summary>

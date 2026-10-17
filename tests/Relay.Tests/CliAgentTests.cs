@@ -130,6 +130,17 @@ public class CliAgentTests
             }
 
             Assert.Equal(provider.BuildArguments(sessionId, options), asking);
+
+            // With auto mode switched on, the only addition is that one mode, and only from a provider
+            // that has one (ADR 0006). From any other, it is left in and the comparison below fails.
+            var auto = provider.BuildArguments(sessionId, options with { AutoMode = () => true }).ToList();
+            if (provider.HasAutoMode && auto.IndexOf("--permission-mode") is var mode and >= 0)
+            {
+                Assert.Equal("auto", auto[mode + 1]);
+                auto.RemoveRange(mode, 2);
+            }
+
+            Assert.Equal(provider.BuildArguments(sessionId, options), auto);
         }
     }
 

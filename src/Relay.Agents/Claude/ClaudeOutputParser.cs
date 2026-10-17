@@ -60,7 +60,10 @@ public static class ClaudeOutputParser
         return CliJson.TryParseObject(output.AsMemory(), out var whole) ? whole : null;
     }
 
-    /// <summary>What one line of the stream says Claude is doing: what it said, a tool it used, or a tool it was refused.</summary>
+    /// <summary>
+    /// What one line of the stream says Claude is doing: what it said, a tool it used, a tool it was
+    /// refused, or the permission mode it started the turn in.
+    /// </summary>
     public static IEnumerable<AgentActivity> ParseActivity(string line)
     {
         // What a tool returned can be a whole file, and none of it is activity. This runs on the
@@ -74,6 +77,7 @@ public static class ClaudeOutputParser
             return (root.GetStringOrNull("type"), root.GetStringOrNull("subtype")) switch
             {
                 ("assistant", _) => [.. Said(root)],
+                ("system", "init") when root.GetStringOrNull("permissionMode") is { Length: > 0 } mode => [new(AgentActivityKind.Mode, mode)],
                 ("system", "permission_denied") => [Refused(root)],
                 _ => [],
             };

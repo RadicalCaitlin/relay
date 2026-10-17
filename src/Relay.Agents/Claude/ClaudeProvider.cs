@@ -9,7 +9,9 @@ namespace Relay.Agents.Claude;
 /// Claude Code via its documented print mode: <c>claude -p --output-format stream-json --verbose</c>,
 /// prompt on stdin, <c>--resume &lt;session_id&gt;</c> to continue. The stream reports each step as it
 /// happens and ends with the reply; print mode only offers it together with <c>--verbose</c>.
-/// No flag that approves anything is passed, so Claude Code's own settings decide what it may do.
+/// No flag that approves anything is passed, so Claude Code's own settings decide what it may do. While
+/// the user has switched it on, <c>--permission-mode auto</c> lets Claude Code's classifier decide the
+/// steps those settings leave open (ADR 0006).
 /// A step that would need an interactive approval is denied, unless the session has an
 /// <see cref="ApprovalTool"/>: Claude Code is then told to put such a step to that tool
 /// (<c>--mcp-config</c> and <c>--permission-prompt-tool</c>), which asks the user.
@@ -31,6 +33,8 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
 
     public override bool CanAskForApproval => true;
 
+    public override bool HasAutoMode => true;
+
     /// <summary>The name Claude Code gives the approval tool: <c>mcp__&lt;server&gt;__&lt;tool&gt;</c>.</summary>
     public const string PermissionPromptTool = $"mcp__{ApprovalTool.ServerName}__{ApprovalTool.ToolName}";
 
@@ -39,6 +43,10 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
         List<string> arguments = ["-p", "--output-format", "stream-json", "--verbose"];
         if (!options.TrustWorkspace)
             arguments.AddRange(["--setting-sources", "user"]);
+        // Only while the user has switched it on, and the only mode Relay ever passes (ADR 0006): auto
+        // mode approves nothing by itself, keeps every deny and ask rule, and has the rest reviewed.
+        if (options.AutoMode?.Invoke() == true)
+            arguments.AddRange(["--permission-mode", "auto"]);
         // Naming a tool to ask approves nothing: Claude Code's own settings still decide every step
         // first, and what they would have refused for want of an answer is put to the user instead.
         if (options.ApprovalTool is { } tool)

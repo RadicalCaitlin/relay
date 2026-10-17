@@ -8,7 +8,8 @@ public sealed class AgentParticipant(
     string displayName,
     IAgentSession? session,
     string? unavailableReason = null,
-    bool asksForApproval = false)
+    bool asksForApproval = false,
+    bool hasAutoMode = false)
 {
     public string Id { get; } = id;
 
@@ -21,6 +22,9 @@ public sealed class AgentParticipant(
 
     /// <summary>Whether this agent asks the user before a step its own settings do not allow.</summary>
     public bool AsksForApproval { get; } = asksForApproval;
+
+    /// <summary>Whether this agent has an auto mode of its own that the user can switch it into.</summary>
+    public bool HasAutoMode { get; } = hasAutoMode;
 
     public AgentSessionState State => Session?.State ?? AgentSessionState.Unavailable;
 
@@ -40,7 +44,7 @@ public sealed class AgentParticipant(
     {
         var (provider, result) = agent;
         return result.IsInstalled
-            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, options), asksForApproval: provider.CanAskForApproval && options.ApprovalTool is not null)
+            ? new(provider.Id, provider.DisplayName, provider.CreateSession(result, options), asksForApproval: provider.CanAskForApproval && options.ApprovalTool is not null, hasAutoMode: provider.HasAutoMode)
             : new(provider.Id, provider.DisplayName, session: null, result.Detail ?? "not installed");
     }
 }

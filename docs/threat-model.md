@@ -104,7 +104,9 @@ exercised. Codex documents both as loaded only from a trusted folder.
 ## Permission and approval boundaries
 
 - Relay never passes a flag that approves tool use, skips permission checks, or changes
-  sandboxing. A test asserts this for every provider, with and without workspace trust.
+  sandboxing. A test asserts this for every provider, with and without workspace trust. The one
+  mode Relay ever passes is Claude's `--permission-mode auto`, and only while you have switched it
+  on with `/auto on`; see "Auto mode".
 - Relay never answers a permission prompt itself. In a terminal, a step Claude's own settings do
   not allow is put to you, and happens only if you type yes; see "Approvals". Everywhere else, and
   for Codex always, such a step is declined by the agent CLI, so an agent is limited to what your
@@ -283,6 +285,28 @@ the agent read, and may be written to get a yes.
   of the pipe.
 - **A folder you do not trust changes nothing here.** Its settings are still not loaded, so it
   cannot allow anything by rule. It can still be what an agent read before it asked.
+
+## Auto mode
+
+`/auto on` runs each Claude turn in Claude Code's own auto mode (`--permission-mode auto`; see
+[adr/0006-claude-auto-mode.md](adr/0006-claude-auto-mode.md)). A model of Anthropic's, the
+classifier, then decides the steps Claude's settings leave open, instead of you.
+
+- **Off unless you switch it on**, and only your own input can: `/auto` is a command, and commands
+  are only read from the first line of what you type. An agent's reply that says `/auto on` is
+  shown and nothing more. Nothing in the working folder can turn it on either: Claude Code ignores
+  `defaultMode: "auto"` in a repository's settings.
+- **Rules still hold.** Deny rules deny and ask rules ask, through the same question as before. So
+  does Claude after its classifier has blocked 3 steps in a row or 20 in a session.
+- **The classifier can be wrong.** It is meant to block a step that goes beyond what you asked or
+  that is driven by something hostile the agent read, and Claude Code says plainly that this is not
+  a guarantee. In an exchange, another agent's handover is something Claude read. With auto mode on
+  and pause mode off, you are trusting the classifier with what one agent asks another to do.
+  `/pause on` puts every handover in front of you first.
+- **What Claude ran in is shown.** Where auto mode is not available to Claude, it runs the turn in
+  another mode, and Relay says so. Where Claude does not say which mode it ran in, Relay says it
+  cannot tell, rather than assume auto mode was used.
+- **Codex is not affected.** It has no auto mode Relay can pass.
 
 ## Secrets and logging
 

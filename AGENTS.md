@@ -149,6 +149,8 @@ The build must stay free of warnings and the tests must pass before a change is 
   signed in to, for two short turns. Run it when Claude Code is upgraded or its arguments change.
 - `ApprovalTests` asks the questions in process, through `ApprovalDesk`, for the same reason the
   folder-trust question is: with redirected streams Relay asks nobody.
+- `AutoModeTests` covers `/auto`: what each provider is passed and when, the mode Claude reports,
+  and that a reply cannot switch it on.
 - `StartCommandApprovalTests` runs the chatroom itself in process, with a fake `IConsoleStreams`
   as the keyboard and an agent that asks over the real pipe. Use it for what depends on when a
   line is typed, or on how Relay leaves.
@@ -181,6 +183,11 @@ and update it in the same change.
   `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`,
   `--dangerously-bypass-approvals-and-sandbox`, or `--sandbox danger-full-access`. The agent's
   own configuration decides what it may do.
+- The one exception is Claude's `--permission-mode auto`, passed only while the user has typed
+  `/auto on`, read when each turn starts (`AgentSessionOptions.AutoMode`). It keeps every deny and
+  ask rule and has the rest reviewed by Claude Code's classifier. Never pass another mode, never
+  turn it on by default, and never let anything but the user's own input change it. See
+  `docs/adr/0006-claude-auto-mode.md`.
 - Never bypass or work around authentication, subscription limits, or approval mechanisms.
 - User text goes to the agent on stdin, never as a command-line argument. On Windows the CLIs
   are `cmd.exe` shims, where argument quoting is not safe.
@@ -207,7 +214,10 @@ and update it in the same change.
   Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
 - Activity is for the user's eyes only. Never record it in the room, never include it in what an
   agent is sent, and never act on it: a reported refusal is shown, not approved or retried. Print
-  it through `RelayConsole.ActivityLine`, which keeps each item to one short line.
+  it through `RelayConsole.ActivityLine`, which keeps each item to one short line. The one kind
+  not printed as a step is `AgentActivityKind.Mode`: `StartCommand` only says, once per message,
+  when Claude could not use auto mode or did not report a mode, printing the mode through
+  `RelayConsole.ActivityLine` like any other activity.
 - `ParseActivity` runs on every line an agent CLI prints, as it prints it. It must cope with any
   text and never throw.
 - Never put an invisible or control character in source as a literal. Write it as a `\uXXXX` escape.
