@@ -54,13 +54,13 @@ internal static class Poll
     }
 }
 
-/// <summary>A test of behaviour only Windows has, such as file sharing, where an open file can refuse to be renamed over.</summary>
+/// <summary>A test of Windows file sharing, where an open file can refuse to be renamed over.</summary>
 public sealed class WindowsFactAttribute : FactAttribute
 {
-    public WindowsFactAttribute(string reason = "Relies on Windows file sharing. Elsewhere an open file never blocks a rename.")
+    public WindowsFactAttribute()
     {
         if (!OperatingSystem.IsWindows())
-            Skip = reason;
+            Skip = "Relies on Windows file sharing. Elsewhere an open file never blocks a rename.";
     }
 }
 
