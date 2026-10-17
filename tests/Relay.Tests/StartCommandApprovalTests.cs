@@ -275,8 +275,11 @@ public sealed class StartCommandApprovalTests : IDisposable
         await Poll.UntilAsync(() => _console.Output.Contains("Paused."), "the handover is held");
         await ReadsAsync(3);
 
-        // Ctrl+C at the pause. The read begun for it cannot be abandoned, so it is kept.
+        // Ctrl+C at the pause. The read begun for it cannot be abandoned, so it is kept. Waiting for
+        // the exchange to record its end is what makes this a test and not a race: pasting earlier
+        // could put the block in front of the pause question instead of the prompt after it.
         Assert.True(command.Interrupt());
+        await Poll.UntilAsync(() => _console.Output.Contains("The exchange was cancelled"), "the exchange has ended");
         _keyboard.Paste("first", "second");
         await ReadsAsync(5);
 
