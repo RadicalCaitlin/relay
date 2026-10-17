@@ -9,11 +9,11 @@ namespace Relay.Agents;
 public static class ServiceCollectionExtensions
 {
     /// <summary>Registers the built-in providers. New providers are added here.</summary>
-    /// <param name="agentWatcher">How to start <see cref="AgentWatcher"/>: this same Relay, with its command.</param>
-    public static IServiceCollection AddRelayAgents(this IServiceCollection services, ProcessRequest agentWatcher)
+    /// <param name="relay">How to start this same Relay, which keeps the agents from outliving it on macOS and Linux.</param>
+    public static IServiceCollection AddRelayAgents(this IServiceCollection services, ProcessRequest relay)
         => services
             .AddSingleton<IExecutableLocator, PathExecutableLocator>()
-            .AddSingleton<IProcessRunner>(new ProcessRunner(agentWatcher))
+            .AddSingleton<IProcessRunner>(new ProcessRunner(relay))
             .AddSingleton<IAgentProvider, ClaudeProvider>()
             .AddSingleton<IAgentProvider, CodexProvider>();
 }

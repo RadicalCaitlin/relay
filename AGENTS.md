@@ -176,11 +176,15 @@ and update it in the same change.
 - When Relay is told to stop (Ctrl+C, terminal closed, SIGTERM, SIGHUP) the request in flight is
   cancelled first, so no agent process outlives Relay. A forced kill is covered too. On Windows
   `ProcessRunner` puts Relay in `KillOnExitJob` before it starts anything, and Windows kills the
-  job's processes when Relay ends. On macOS and Linux `ProcessRunner` tells `relay agent-watcher`
-  (`AgentWatcher`) each agent it starts, and the watcher kills the trees of those still running
-  when its input ends, which is when Relay ends. If Relay cannot join the job or tell the watcher,
-  the agent is not run. The watcher writes nothing, decides nothing, and ignores the signals a
-  terminal sends to Relay, so it leaves only after Relay has.
+  job's processes when Relay ends. On macOS and Linux `ProcessRunner` starts each agent through
+  `relay agent-group`, which gives it a process group of its own before it becomes the agent. It
+  then tells `relay agent-watcher` (`AgentWatcher`) the agent's id and start time. When its input
+  ends, which is when Relay ends, the watcher kills the group of every agent still running. A
+  watcher that has died is replaced at the next agent and told every agent still running. If
+  Relay cannot join the job or tell a watcher, the agent is not run. The watcher writes nothing,
+  decides nothing, and ignores the signals a terminal sends to Relay, so it leaves only after
+  Relay has. Because each agent has its own group, the terminal's Ctrl+C reaches only Relay, which
+  then cancels the run.
 - Never log, print, or persist environment variables, tokens, or credentials. Never read an
   agent's credential files.
 - Never commit a secret, including in tests: build fake credentials at run time rather than

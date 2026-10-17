@@ -29,21 +29,23 @@ public interface IProcessRunner
     Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default);
 }
 
-/// <param name="watcher">
-/// How to start <see cref="AgentWatcher"/>, which stops the agents on macOS and Linux if Relay is
-/// killed. Windows uses <see cref="KillOnExitJob"/> instead and ignores it.
+/// <param name="relay">
+/// How to start this same Relay. On macOS and Linux each process then starts in a process group of
+/// its own, and <see cref="AgentWatcher"/> stops those groups if Relay is killed. Windows uses
+/// <see cref="KillOnExitJob"/> instead and ignores it.
 /// </param>
-public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunner
+public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KillGrace = TimeSpan.FromSeconds(5);
 
-    private readonly AgentWatch? _watch = watcher is null || OperatingSystem.IsWindows() ? null : new(watcher);
+    private readonly ProcessRequest? _relay = OperatingSystem.IsWindows() ? null : relay;
+    private readonly AgentWatch? _watch = OperatingSystem.IsWindows() || relay is null ? null : new(relay);
 
     public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(request.FileName)
+        var startInfo = new ProcessStartInfo(_relay?.FileName ?? request.FileName)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -55,6 +57,14 @@ public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunn
             CreateNoWindow = true,
             WorkingDirectory = request.WorkingDirectory ?? string.Empty,
         };
+        if (_relay is not null)
+        {
+            foreach (var argument in _relay.Arguments)
+                startInfo.ArgumentList.Add(argument);
+            startInfo.ArgumentList.Add(AgentWatcher.GroupCommand);
+            // A relative path is meant from Relay's working directory, but agent-group runs in the agent's.
+            startInfo.ArgumentList.Add(request.FileName.Contains('/') ? Path.GetFullPath(request.FileName) : request.FileName);
+        }
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
 
@@ -93,7 +103,7 @@ public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunn
         {
             try
             {
-                _watch.Add(process.Id);
+                _watch.Add(process);
             }
             catch (IOException ex)
             {
@@ -126,7 +136,11 @@ public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunn
             {
             }
 
-            return new(process.ExitCode, Snapshot(output), Snapshot(error));
+            var standardError = Snapshot(error);
+            if (_relay is not null && process.ExitCode == AgentWatcher.ExecFailedExitCode && standardError.StartsWith(AgentWatcher.ExecFailed, StringComparison.Ordinal))
+                throw new AgentException($"Could not start '{name}': {standardError[AgentWatcher.ExecFailed.Length..].Trim()}") { PromptMayHaveBeenRead = false };
+
+            return new(process.ExitCode, Snapshot(output), standardError);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -137,7 +151,9 @@ public sealed class ProcessRunner(ProcessRequest? watcher = null) : IProcessRunn
             // Whatever went wrong, never leave the CLI running behind us.
             if (!process.HasExited)
                 await KillAsync(process);
-            _watch?.Remove(process.Id);
+            // A kill can fail or time out, and an agent still running must stay on the watcher's list.
+            if (process.HasExited)
+                _watch?.Remove(process.Id);
 
             // A pump can outlive the run, reading from a descendant that kept the pipe open, and
             // the caller has moved on: nothing it reads from here on is part of this run.
