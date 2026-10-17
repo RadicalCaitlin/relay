@@ -80,6 +80,18 @@ public class MessageRouterTests
         Assert.Contains("fix this\n\n    indented\n", Assert.Single(claude.Received));
     }
 
+    // The break before a last line that is blank is the only one in the message, so reattaching the
+    // lines after the first has to put it back even when there is nothing after it.
+    [Fact]
+    public async Task A_message_ending_in_a_blank_line_keeps_it()
+    {
+        var claude = AddAgent("claude");
+
+        await _router.SendHumanMessageAsync(_room, "@claude fix this\n");
+
+        Assert.Contains("fix this\n", Assert.Single(claude.Received));
+    }
+
     [Fact]
     public async Task Untargeted_message_is_recorded_and_sent_to_nobody()
     {

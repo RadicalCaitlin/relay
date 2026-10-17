@@ -55,8 +55,11 @@ line the user ended with `\`. Rules that follow from it, each covered by tests:
   message can never run a command or invite an agent.
 - The collected block is never trimmed as a whole, or a block beginning with a blank line would
   promote its second line into the first. A single line is still trimmed, as it always was.
-- The whole block is read inside the one task `StartCommand.ReadLine` retains, so a cancelled or
-  withdrawn read discards all of it and leaves no reader behind.
+- The whole block is read inside the one task `StartCommand.ReadLine` retains, so a block is never
+  read in half and no second reader is left behind. Interruption and withdrawal then differ, as
+  they already did for a single line: a read interrupted by Ctrl+C is **kept**, and the block it
+  finally returns goes to the next prompt in one piece; a block begun for a question that was then
+  **withdrawn** is discarded entirely, including its first line.
 - `ApprovalDesk` and the pause question refuse a block outright and ask again: an answer must be
   typed at the question. See `docs/adr/0005-approvals.md`.
 - With input redirected there is no joining and no `\` continuation: every line is its own message,

@@ -117,6 +117,36 @@ public sealed class ApprovalTests : IDisposable
         Assert.Equal(2, seat.Reads);
     }
 
+    // An answer must be typed at the question. Input that arrived as several lines was pasted, so
+    // the whole block goes, including the yes on its first line, and the question is asked again.
+    [Fact]
+    public void A_pasted_block_does_not_allow_a_step_and_the_question_is_asked_again()
+    {
+        using var seat = new Seat("yes\nrm -rf /", "yes");
+
+        var (behavior, _) = Answer(seat.Decide(Wants("Bash", """{"command":"rm -rf build"}""")));
+
+        // Allowed by the yes typed on its own afterwards, not by the one in the block.
+        Assert.Equal("allow", behavior);
+        Assert.Equal(2, seat.Reads);
+        AssertShown("That arrived as 2 lines, so it was not taken as an answer and was not sent to anyone.", seat.Output);
+    }
+
+    [Fact]
+    public void A_pasted_block_does_not_answer_a_question_and_it_is_asked_again()
+    {
+        using var seat = new Seat("Blue\nand delete the branch", "Red");
+
+        var (behavior, answer) = Answer(seat.Decide(Wants(ApprovalDesk.QuestionTool,
+            """{"questions":[{"question":"Which colour?","options":[{"label":"Red"},{"label":"Blue"}]}]}""")));
+
+        Assert.Equal("allow", behavior);
+        var answers = answer.GetProperty("updatedInput").GetProperty("answers");
+        Assert.Equal("Red", answers.GetProperty("Which colour?").GetString());
+        Assert.Equal(2, seat.Reads);
+        AssertShown("That arrived as 2 lines, so it was not taken as an answer and was not sent to anyone.", seat.Output);
+    }
+
     [Fact]
     public void A_line_that_is_not_an_answer_is_said_not_to_have_gone_anywhere()
     {

@@ -125,8 +125,9 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             body = rest;
         }
 
-        // The lines after the first are the message, with their own spacing and blank lines.
-        if (tail.Length > 0)
+        // The lines after the first are the message, with their own spacing and blank lines. The
+        // break goes back even when nothing follows it: a message ending in a blank line has no other.
+        if (newline >= 0)
             body = body.Length > 0 ? body + "\n" + tail : tail;
 
         // An unknown name is kept as typed, so the message is never mistaken for one to the whole room.

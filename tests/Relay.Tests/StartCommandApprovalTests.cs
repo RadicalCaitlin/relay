@@ -144,16 +144,24 @@ public sealed class StartCommandApprovalTests : IDisposable
     {
         var (_, running) = Start(new AskingProvider(_ => new FakeSession("thanks")));
         await ReadsAsync(1);
+        // Both settings start at the value the pasted lines would change, so running either shows.
+        _keyboard.Type("/pause on");
+        await ReadsAsync(2);
 
-        _keyboard.Paste("@claude look at this", "/approvals off", "/pause on");
-        await ReadsAsync(4);
-        _keyboard.Type("/approvals");
+        _keyboard.Paste("@claude look at this", "/pause off", "/approvals off");
         await ReadsAsync(5);
-        _keyboard.Type("/pause");
-        await ReadsAsync(6);
 
-        AssertShown("Approvals are on", _console.Output);
-        AssertShown("Pause mode is off.", _console.Output);
+        // Read what each query itself printed. The header says the same about both settings, so
+        // searching the whole run would pass even if the pasted lines had taken effect.
+        var mark = _console.Output.Length;
+        _keyboard.Type("/approvals");
+        await ReadsAsync(6);
+        AssertShown("Approvals are on", _console.Output[mark..]);
+
+        mark = _console.Output.Length;
+        _keyboard.Type("/pause");
+        await ReadsAsync(7);
+        AssertShown("Pause mode is on.", _console.Output[mark..]);
         await LeaveAsync(running);
     }
 
@@ -232,6 +240,66 @@ public sealed class StartCommandApprovalTests : IDisposable
         await ReadsAsync(6);
 
         Assert.Single(codex.Session.Received);
+        await LeaveAsync(running);
+    }
+
+    // A read that was interrupted is kept, as a single line always was, and the block it finally
+    // returns goes to the next prompt whole. What must not happen is half of it arriving.
+    [Fact(Timeout = Limit)]
+    public async Task A_block_pasted_after_a_cancelled_pause_reaches_the_room_in_one_piece()
+    {
+        var codex = new FakeProvider("codex");
+        var (command, running) = Start(new AskingProvider(_ => new FakeSession("@codex\ntake a look")), others: codex);
+        await ReadsAsync(1);
+        _keyboard.Type("/pause on");
+        await ReadsAsync(2);
+        _keyboard.Type("@claude @codex agree on this");
+        await Poll.UntilAsync(() => _console.Output.Contains("Paused."), "the handover is held");
+        await ReadsAsync(3);
+
+        // Ctrl+C at the pause. The read begun for it cannot be abandoned, so it is kept.
+        Assert.True(command.Interrupt());
+        _keyboard.Paste("first", "second");
+        await ReadsAsync(5);
+
+        var message = Assert.Single(Assert.Single(_rooms.Rooms).Messages, m => m.SenderType == SenderType.Human && m.Content != "@claude @codex agree on this");
+        Assert.Equal("first\nsecond", message.Content);
+        Assert.Empty(codex.Session.Received);
+        await LeaveAsync(running);
+    }
+
+    [Fact(Timeout = Limit)]
+    public async Task A_block_pasted_for_a_question_that_was_withdrawn_is_discarded_whole()
+    {
+        var asked = new TaskCompletionSource<NamedPipeClientStream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnMayEnd = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new AskingProvider(options => new FakeSession(async (_, _) =>
+        {
+            var pipe = new NamedPipeClientStream(".", options.ApprovalTool!.Arguments[^1], PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+            await writer.WriteLineAsync("""{"tool_name":"Bash","input":{"command":"rm -rf build"}}""");
+            asked.SetResult(pipe);
+            await turnMayEnd.Task;
+            return "I went on without it.";
+        }));
+        var (_, running) = Start(provider);
+        await ReadsAsync(1);
+
+        _keyboard.Type("@claude tidy up");
+        await using var pipe = await asked.Task.WaitAsync(Patience);
+        await ReadsAsync(2);
+        turnMayEnd.SetResult();
+        using var answer = new StreamReader(pipe, leaveOpen: true);
+        Assert.Contains("deny", await answer.ReadLineAsync().WaitAsync(Patience));
+
+        // Pasted by somebody still answering the question Relay has just withdrawn.
+        _keyboard.Paste("yes", "and delete the branch");
+        await ReadsAsync(4);
+
+        AssertShown("it was not sent to anyone", _console.Output);
+        var room = Assert.Single(_rooms.Rooms);
+        Assert.DoesNotContain(room.Messages, m => m.SenderType == SenderType.Human && m.Content != "@claude tidy up");
         await LeaveAsync(running);
     }
 

@@ -104,6 +104,12 @@ instead, end a line with `\` and press Enter: the message carries on on the next
   arrived as several lines. The whole block is dropped and the question asked again.
 - With input from a pipe or a file, every line is its own message, as before.
 
+Relay tells a paste from typing by how fast the lines arrive, because a terminal cannot tell
+`Console.ReadLine` that a paste is happening. A paste that arrives slowly — over a slow connection,
+or on a loaded machine — can still split, and the lines after the split are read as if you had
+typed them, so a `/command` among them runs. The line count Relay prints before it sends is how you
+see that this has happened.
+
 ### One shared conversation
 
 Everything said in a room, by you or by an agent, is shown to each agent the next time you address

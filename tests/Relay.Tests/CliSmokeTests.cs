@@ -365,6 +365,24 @@ public sealed class CliSmokeTests : IDisposable
         Assert.Empty(_harness.Invocations("codex"));
     }
 
+    // Lines that arrive together are one message only at a keyboard. Through a pipe nothing arrives
+    // "together", so every line is its own input and a /command among them still runs, as always.
+    [Fact]
+    public async Task With_input_redirected_every_line_is_still_its_own_message()
+    {
+        InstallBothAgents();
+
+        var output = await _harness.ChatAsync(["start"], "@claude first", "second line", @"a path ending in \", "/history", "/exit");
+
+        Assert.DoesNotContain("second line", _harness.StandardInput("claude"));
+        AssertShown("Recorded. Agents will see it the next time you address them", output);
+        AssertNotShown("as one message", output);
+        // Three messages, not one: the backslash is no continuation here, and nothing was joined.
+        AssertShown(@"You: @claude first", output);
+        AssertShown("You: second line", output);
+        AssertShown(@"You: a path ending in \", output);
+    }
+
     [Fact]
     public async Task Role_given_to_an_agent_reaches_it_with_every_message_until_it_is_removed()
     {

@@ -113,15 +113,22 @@ exercised. Codex documents both as loaded only from a trusted folder.
 - An agent can start another agent's turn only inside an exchange you opened; see the next section.
   Outside one, only text you type starts a turn. `/commands` are only ever read from your input: an
   agent reply containing `/reset` is displayed and nothing more.
-- **A `/command` you paste does not run.** Lines that arrive together are one message, and only its
-  first line is read as a command or for the agents it addresses. Pasting text holding
-  `/approvals off`, `/pause off` or `/reset` on any line but the first changes nothing: those lines
-  are message text. Relay says how many lines it is about to send, so a paste that went wrong is
-  visible before it goes anywhere. Where the first line of a paste is itself a command, it runs with
-  only that line, and Relay says how many lines it did not use.
+- **A `/command` on a later line of a paste does not run.** Lines that arrive together are one
+  message, and only its first line is read as a command or for the agents it addresses. Pasting text
+  holding `/approvals off`, `/pause off` or `/reset` below the first line changes nothing: those
+  lines are message text. Relay says how many lines it is about to send, so a paste that went wrong
+  is visible before it goes anywhere. Where the first line of a paste is itself a command, it runs
+  with only that line, and Relay says how many lines it did not use.
 - **An approval answer and a choice at a pause must be typed at the question.** Input that arrived
   as several lines is dropped whole, including its first line, and the question is asked again, so a
   pasted `yes` or `/go` cannot allow a step or deliver a handover you have not read.
+- **Both of those rest on a timing heuristic, not a paste boundary Relay can see.** `Console.ReadLine`
+  cannot report a bracketed paste, so Relay treats lines already waiting, or arriving within 30ms, as
+  one message. A paste delivered more slowly than that — a slow terminal, a loaded machine, a remote
+  session — splits, and the lines after the split are read as fresh input: a `/command` among them
+  then runs, and a `yes` on the first line can be taken as an answer before the rest arrives. The
+  line count Relay prints is what shows this has happened. A boundary Relay can see needs the
+  key-by-key editor of #40.
 
 ## Exchanges between agents
 
@@ -327,6 +334,7 @@ See "Remaining risks" for the cases this does not cover.
 | **A mistyped agent name after the first is sent as text.** `@claude @cdoex agree` goes to Claude alone, because a second `@word` that is not an agent is usually code (`@Override`). No exchange opens, so nothing is delivered that you did not ask for, but you get a narrower conversation than you meant. | Accepted. The waiting line shows a turn count only when an exchange is open. |
 | **An agent that writes a handover the wrong way is not understood.** Its reply comes to you and the exchange ends without a notice. | By design: the safe way to be wrong. |
 | **Nothing in a room is private from its agents**, including what you said to a different agent, and anything pasted into the room. | By design. Private messages are not implemented. |
+| **A paste is recognised by timing, so a slow one splits.** Lines arriving more than 30ms apart become separate input, and a `/command` or a `yes` among them is then acted on. `Console.ReadLine` cannot report a bracketed paste, so Relay has nothing better to go on. | Accepted for now (#63). The line count printed before each joined message shows when a paste split. A real paste boundary needs the key-by-key editor (#40). |
 | **Display spoofing with plain text.** An agent can print lines that look like chat lines, such as `You: ...`, though not in the real prompt's colours. | Accepted for now. |
 | **Unbounded output.** A CLI that printed gigabytes would exhaust memory. Claude's step-by-step output includes the result of every tool it uses, such as the contents of each file it reads, so a long turn now holds more than its reply. | Accepted for now. |
 | **Dependencies.** NuGet packages are pinned to exact versions. GitHub Actions are pinned to major tags, not commit hashes. | Accepted for now. |
