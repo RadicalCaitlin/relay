@@ -151,7 +151,15 @@ public static class AgentWatcher
     /// finished as soon as it has, so that id is on the list for only an instant.
     /// </summary>
     private static bool IsAgent(Process process, DateTime start)
-        => !OperatingSystem.IsWindows() && getsid(process.Id) == process.Id || StartedAt(process, start);
+    {
+        if (OperatingSystem.IsWindows())
+            return StartedAt(process, start);
+
+        // macOS gives no session for a process that has exited but not yet been reaped. Its id is
+        // still taken, so it was the agent or nothing.
+        var session = getsid(process.Id);
+        return session == process.Id || session == -1 || StartedAt(process, start);
+    }
 
     private static bool StartedAt(Process process, DateTime start)
     {
