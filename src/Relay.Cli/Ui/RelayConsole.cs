@@ -11,7 +11,11 @@ internal static class RelayConsole
     /// overrides, so it cannot reorder what is shown. Then escapes Spectre markup.
     /// </summary>
     public static string Safe(string text)
-        => Markup.Escape(string.Concat(text.Where(c => c is '\n' or '\t' || !IsUnsafe(c))));
+        => Markup.Escape(Clean(text));
+
+    /// <summary>As <see cref="Safe"/> without escaping markup, for text that is escaped piece by piece later.</summary>
+    public static string Clean(string text)
+        => string.Concat(text.Where(c => c is '\n' or '\t' || !IsUnsafe(c)));
 
     /// <summary>
     /// As <see cref="Safe"/>, for text that must stay on one line, such as a folder name. A name
@@ -37,6 +41,19 @@ internal static class RelayConsole
             return SafeLine(line);
 
         return SafeLine(line[..CutAt(line, maxLength)] + "...");
+    }
+
+    /// <summary>
+    /// As <see cref="ActivityLine"/>, with the name of the tool or skill a step used highlighted.
+    /// Only a name that the line itself begins with is: the style is Relay's, the name the agent's.
+    /// </summary>
+    public static string Step(AgentActivity activity, string folder)
+    {
+        var line = ActivityLine(activity.Text, folder);
+        if (activity.Tool is null || ActivityLine(activity.Tool, folder) is not { Length: > 0 } name || !line.StartsWith(name, StringComparison.Ordinal))
+            return line;
+
+        return $"[bold]{name}[/]{line[name.Length..]}";
     }
 
     /// <summary>Where to cut text longer than <paramref name="maxLength"/>: half of a character written as a pair would be shown as a broken one.</summary>
