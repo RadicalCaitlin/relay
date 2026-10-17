@@ -138,6 +138,25 @@ public sealed class ForcedExitTests : IDisposable
     }
 
     [UnixFact]
+    public async Task The_watcher_stops_the_agent_when_relay_has_gone_though_another_process_holds_its_input_open()
+    {
+        using var agent = StartWrapper();
+        var child = await Poll.ForProcessIdAsync(_pidFile);
+        var dotnet = new PathExecutableLocator().Find("dotnet")!;
+        var relayDll = Path.Combine(AppContext.BaseDirectory, "relay.dll");
+        // The sh stands in for Relay. The subshell feeding the watcher outlives it, as a process that
+        // inherited Relay's end of the pipe would.
+        using var relay = Process.Start("sh", ["-c", "{ echo \"$0\"; sleep 30; } | \"$1\" \"$2\" agent-watcher",
+            AgentWatcher.Added(agent.Id, agent.StartTime), dotnet, relayDll])!;
+        // Long enough for the runtime to start and the watcher to read the agent.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        relay.Kill(entireProcessTree: false);
+
+        await AssertStopsAsync(child);
+    }
+
+    [UnixFact]
     public async Task Stopping_an_agent_also_stops_what_it_left_in_its_session()
     {
         // The subshell exits at once, so the sleep it started is no longer in the agent's tree.

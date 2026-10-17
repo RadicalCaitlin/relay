@@ -313,8 +313,9 @@ tool that asks on the terminal, such as an ssh passphrase prompt or sudo, fails 
 waiting for input it can never get. Relay also starts a second copy of itself,
 `relay agent-watcher`, with the first agent it runs. Over a pipe only Relay holds the other end
 of, it tells the watcher each agent it starts, with its start time, and each one as soon as it
-has exited. That pipe closes when Relay ends, however it ends, and the watcher then kills the
-whole group of every agent still running. It ignores the Ctrl+C, Ctrl+\, Ctrl+Z and hangup the
+has exited. That pipe closes when Relay ends, however it ends. The watcher also notices when it is
+handed to a new parent, in case another process inherited Relay's end of the pipe, which macOS
+cannot rule out. Either way, the watcher then kills the whole group of every agent still running. It ignores the Ctrl+C, Ctrl+\, Ctrl+Z and hangup the
 terminal sends it along with Relay, so it is still there when Relay goes. Before it kills
 anything it checks that the process with the agent's id is still the agent: the leader of a
 session of that id, or, before it has made its session, a process that started when Relay

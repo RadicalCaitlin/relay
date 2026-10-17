@@ -37,10 +37,17 @@ public static class AgentWatcher
             ? null
             : new Signals([PosixSignal.SIGINT, PosixSignal.SIGQUIT, PosixSignal.SIGTSTP, PosixSignal.SIGHUP, PosixSignal.SIGTERM]);
 
+        using var stop = new CancellationTokenSource();
+        var orphaned = OrphanedAsync(stop.Token);
+
         var agents = new Dictionary<int, DateTime>();
         using var reader = new StreamReader(input);
-        while (await reader.ReadLineAsync() is { } line)
+        while (true)
         {
+            var read = reader.ReadLineAsync();
+            if (await Task.WhenAny(read, orphaned) != read || await read is not { } line)
+                break;
+
             if (line.StartsWith('+') && line[1..].Split(' ') is [var added, var ticks]
                 && int.TryParse(added, CultureInfo.InvariantCulture, out var id)
                 && long.TryParse(ticks, CultureInfo.InvariantCulture, out var start))
@@ -49,9 +56,29 @@ public static class AgentWatcher
                 agents.Remove(removed);
         }
 
+        await stop.CancelAsync();
         foreach (var (id, start) in agents)
             Kill(id, start);
         return 0;
+    }
+
+    /// <summary>
+    /// Ends once the watcher has been handed to a new parent, which happens when Relay dies. The
+    /// input alone is not enough: macOS has no atomic way to make a pipe close on exec, so a process
+    /// Relay starts at the same moment as the watcher can inherit Relay's end of the watcher's input
+    /// and keep it open after Relay has gone.
+    /// </summary>
+    private static async Task OrphanedAsync(CancellationToken cancellationToken)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            return;
+        }
+
+        var parent = getppid();
+        while (!cancellationToken.IsCancellationRequested && getppid() == parent)
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
 
     /// <summary>The line that tells the watcher about an agent: its id, and when it started.</summary>
@@ -140,6 +167,9 @@ public static class AgentWatcher
 
     [DllImport("libc", SetLastError = true)]
     private static extern int getsid(int pid);
+
+    [DllImport("libc")]
+    private static extern int getppid();
 
     [DllImport("libc", SetLastError = true)]
     private static extern int execvp(string file, string?[] argv);
