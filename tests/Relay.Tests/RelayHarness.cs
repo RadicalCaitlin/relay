@@ -144,6 +144,8 @@ internal sealed class RelayHarness : IDisposable
             startInfo.ArgumentList.Add(argument);
         startInfo.Environment["PATH"] = Directory + Path.PathSeparator + _toolPath;
         startInfo.Environment["RELAY_TEST_DIR"] = Directory;
+        // TEMPORARY DIAGNOSTIC for the intermittent macOS failure; removed once it is understood.
+        startInfo.Environment["RELAY_WATCHER_TRACE"] = PathTo("watcher.trace");
         // Keep the developer's real trusted folders out of the tests, and the tests out of theirs.
         startInfo.Environment["RELAY_HOME"] = PathTo("relay-home");
         // Spectre.Console turns colour escape codes on when it sees GitHub Actions, even with output
