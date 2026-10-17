@@ -47,8 +47,9 @@ starts with `@id` the router calls that participant's `IAgentSession`. The reply
 notice explaining the failure, is recorded in the room and returned for display.
 
 Messages of several lines: `Relay.Cli.Ui.PastedInput` reads one message, not one line. Lines that
-are already waiting, or that arrive within `PastedInput.Grace`, are joined with newlines, as is a
-line the user ended with `\`. Rules that follow from it, each covered by tests:
+are already waiting, or that arrive within `PastedInput.Grace`, are joined with newlines. A `\` at
+the end of a line is text: typing a message over several lines needs the input editor of #67.
+Rules that follow from it, each covered by tests:
 
 - Only the first line is read as a `/command` or for the mentions a message is addressed to, in
   `StartCommand.RunLoopAsync` and in `MessageRouter.SendHumanMessageAsync`. Text pasted into a
@@ -62,7 +63,7 @@ line the user ended with `\`. Rules that follow from it, each covered by tests:
   **withdrawn** is discarded entirely, including its first line.
 - `ApprovalDesk` and the pause question refuse a block outright and ask again: an answer must be
   typed at the question. See `docs/adr/0005-approvals.md`.
-- With input redirected there is no joining and no `\` continuation: every line is its own message,
+- With input redirected there is no joining: every line is its own message,
   so piped input and `RelayHarness` behave as they always have.
 
 Shared context: before calling the agent, the router asks the room what that agent has not seen

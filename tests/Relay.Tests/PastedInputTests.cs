@@ -110,16 +110,17 @@ public class PastedInputTests
         Assert.Equal(new TypedInput("second", 1), await ReadAsync(reader));
     }
 
+    // A backslash is text. Relay never waits for another line because of one: typing a message over
+    // several lines needs the input editor of #67.
     [Fact(Timeout = Patience)]
-    public async Task A_line_ending_in_a_backslash_waits_however_long_the_next_line_takes()
+    public async Task A_typed_line_ending_in_a_backslash_is_sent_as_typed()
     {
-        var reader = Reader(Together(@"first\"), new("second", TimeSpan.FromSeconds(30)));
+        var reader = Reader(Together(@"a path ending in \"), new("next message", AfterTheWindow));
 
-        Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
+        Assert.Equal(new TypedInput(@"a path ending in \", 1), await ReadAsync(reader));
+        Assert.Equal(new TypedInput("next message", 1), await ReadAsync(reader));
     }
 
-    // Only the last line of what arrived can ask for another. Inside a paste a trailing backslash is
-    // the text's own, as in a shell command written over several lines.
     [Fact(Timeout = Patience)]
     public async Task A_backslash_inside_a_paste_is_kept()
     {
@@ -139,11 +140,12 @@ public class PastedInputTests
     }
 
     [Fact(Timeout = Patience)]
-    public async Task A_backslash_at_the_end_of_the_last_line_is_still_not_sent()
+    public async Task A_backslash_at_the_end_of_a_paste_is_kept()
     {
-        var reader = Reader(Together(@"a path ending in \"));
+        var reader = Reader(Together("first"), Together(@"C:\temp\"), new("next message", AfterTheWindow));
 
-        Assert.Equal(new TypedInput("a path ending in", 1), await ReadAsync(reader));
+        Assert.Equal(new TypedInput("first\n" + @"C:\temp\", 2), await ReadAsync(reader));
+        Assert.Equal(new TypedInput("next message", 1), await ReadAsync(reader));
     }
 
     [Fact(Timeout = Patience)]

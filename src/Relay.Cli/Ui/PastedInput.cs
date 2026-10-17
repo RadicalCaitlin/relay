@@ -9,7 +9,7 @@ internal readonly record struct TypedInput(string Text, int Lines);
 /// Reads one message from the keyboard. Lines that arrive together are one message: a paste is not
 /// several messages, and a line of it is never read as a /command. Relay reads a line at a time, so
 /// a paste can only be recognised by the rest of it already waiting; a terminal that reports a
-/// bracketed paste needs the key-by-key editor of #40.
+/// bracketed paste needs the key-by-key editor of #67.
 /// </summary>
 /// <param name="pause">How the wait between two looks at the keyboard is taken. A seam: a test
 /// moves its own clock on here, because this is where the time between polls passes.</param>
@@ -35,34 +35,9 @@ internal sealed class PastedInput(IConsoleStreams streams, TimeProvider time, Ac
         if (streams.IsInputRedirected)
             return new(first.Trim(), 1);
 
-        var lines = new List<string>();
-        var line = first;
-        while (true)
-        {
-            if (MoreIsArriving())
-            {
-                // More of what arrived together. A backslash ending a line inside a paste belongs to
-                // the text, as in a shell command written over several lines, so it is left alone.
-                lines.Add(line);
-            }
-            else if (line.EndsWith('\\'))
-            {
-                // The last line of what arrived, ending in a backslash: the user asking to carry the
-                // message on to the line they type next. The backslash itself is not part of it.
-                lines.Add(line[..^1]);
-            }
-            else
-            {
-                lines.Add(line);
-                break;
-            }
-
-            // The end of input ends the block, including one a backslash promised more of.
-            if (streams.ReadLine() is not { } next)
-                break;
-
-            line = next;
-        }
+        var lines = new List<string> { first };
+        while (MoreIsArriving() && streams.ReadLine() is { } next)
+            lines.Add(next);
 
         return lines.Count == 1 ? new(lines[0].Trim(), 1) : new(string.Join('\n', lines), lines.Count);
     }

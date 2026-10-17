@@ -64,7 +64,7 @@ answers for the user, and an agent that cannot ask is run as before.**
   Claude's own questions alike (#63). What Relay has to go on is timing, not a paste boundary the
   terminal reports: lines already waiting, or arriving within 30ms, are one block. A paste delivered
   more slowly splits, and its first line can then be read as an answer, so this narrows the window
-  rather than closing it. Closing it needs the key-by-key input editor (#40).
+  rather than closing it. Closing it needs the key-by-key input editor (#67).
 - **The user is shown what will happen, not the agent's account of it.** Every field of the
   request is shown under its name. A command is shown in full, and a step whose command is too
   long to show in full (4,000 characters or 60 lines) is refused without asking. Other values are
