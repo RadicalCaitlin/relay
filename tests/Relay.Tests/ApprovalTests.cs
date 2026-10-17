@@ -3,6 +3,7 @@ using System.Text.Json;
 using Relay.Agents.Claude;
 using Relay.Agents.Codex;
 using Relay.Cli.Approvals;
+using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Spectre.Console.Testing;
 using static Relay.Tests.RelayHarness;
@@ -26,7 +27,10 @@ public sealed class ApprovalTests : IDisposable
 
     private static ApprovalRequest Wants(string tool, string input) => new(tool, Json(input));
 
-    /// <summary>A desk whose user types the given lines, one for each time they are asked. Null is a turn that ended first.</summary>
+    /// <summary>
+    /// A desk whose user types the given lines, one for each time they are asked. Null is a turn
+    /// that ended first, and one holding newlines is a block that arrived as several lines at once.
+    /// </summary>
     private sealed class Seat : IDisposable
     {
         private readonly Queue<string?> _typed;
@@ -54,11 +58,11 @@ public sealed class ApprovalTests : IDisposable
 
         public void Dispose() => Console.Dispose();
 
-        private string? Read()
+        private TypedInput? Read()
         {
             Events.Add($"read after: {Console.Output}");
             Assert.True(_typed.Count > 0, $"The user was asked more often than the test expected:\n{Console.Output}");
-            return _typed.Dequeue();
+            return _typed.Dequeue() is { } line ? new TypedInput(line, line.Split('\n').Length) : null;
         }
     }
 
@@ -111,6 +115,36 @@ public sealed class ApprovalTests : IDisposable
 
         Assert.Equal("deny", behavior);
         Assert.Equal(2, seat.Reads);
+    }
+
+    // An answer must be typed at the question. Input that arrived as several lines was pasted, so
+    // the whole block goes, including the yes on its first line, and the question is asked again.
+    [Fact]
+    public void A_pasted_block_does_not_allow_a_step_and_the_question_is_asked_again()
+    {
+        using var seat = new Seat("yes\nrm -rf /", "yes");
+
+        var (behavior, _) = Answer(seat.Decide(Wants("Bash", """{"command":"rm -rf build"}""")));
+
+        // Allowed by the yes typed on its own afterwards, not by the one in the block.
+        Assert.Equal("allow", behavior);
+        Assert.Equal(2, seat.Reads);
+        AssertShown("That arrived as 2 lines, so it was not taken as an answer and was not sent to anyone.", seat.Output);
+    }
+
+    [Fact]
+    public void A_pasted_block_does_not_answer_a_question_and_it_is_asked_again()
+    {
+        using var seat = new Seat("Blue\nand delete the branch", "Red");
+
+        var (behavior, answer) = Answer(seat.Decide(Wants(ApprovalDesk.QuestionTool,
+            """{"questions":[{"question":"Which colour?","options":[{"label":"Red"},{"label":"Blue"}]}]}""")));
+
+        Assert.Equal("allow", behavior);
+        var answers = answer.GetProperty("updatedInput").GetProperty("answers");
+        Assert.Equal("Red", answers.GetProperty("Which colour?").GetString());
+        Assert.Equal(2, seat.Reads);
+        AssertShown("That arrived as 2 lines, so it was not taken as an answer and was not sent to anyone.", seat.Output);
     }
 
     [Fact]

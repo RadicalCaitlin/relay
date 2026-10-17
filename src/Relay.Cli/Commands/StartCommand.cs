@@ -138,12 +138,13 @@ internal sealed class StartCommand(
 
     private readonly ManualResetEventSlim _idle = new(initialState: true);
     private readonly Lock _writing = new();
+    private readonly PastedInput _input = new(streams, TimeProvider.System);
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
     private string? _turnTimeout;
     private string _workspace = string.Empty;
     private bool _pause;
-    private Task<string?>? _read;
+    private Task<TypedInput?>? _read;
     private bool _readInterrupted;
     private bool _readWithdrawn;
     private ApprovalDesk? _desk;
@@ -269,11 +270,19 @@ internal sealed class StartCommand(
         while (!cancellationToken.IsCancellationRequested)
         {
             console.Markup("[bold green]You:[/] ");
-            var input = ReadLine();
-            if (input is null)
+            if (ReadLine() is not { } typed)
                 return;
-            if (input.Length == 0)
+            // A blank line has always been skipped, and a paste of nothing but blank lines is still
+            // nothing: it must not be recorded as a message for every agent to be shown.
+            if (string.IsNullOrWhiteSpace(typed.Text))
                 continue;
+
+            // Only the first line decides what a message is, so a line of a paste is never run as a
+            // command and never addresses anyone. The rest is text.
+            var input = FirstLine(typed.Text);
+            var extra = typed.Lines - 1;
+            if (extra > 0 && IsCommand(input))
+                console.MarkupLine($"[yellow]Only the first line was read as a command. The other {extra} line{(extra == 1 ? " was" : "s were")} not used.[/]");
 
             switch (input.ToLowerInvariant())
             {
@@ -348,19 +357,30 @@ internal sealed class StartCommand(
                 case var command when command.StartsWith("/restart "):
                     Reset(room, command["/restart ".Length..].Trim().TrimStart('@'), keepRoom: true);
                     break;
-                // A line whose first word is /word was meant as a command, with or without arguments, and a
-                // mistyped one must not be recorded for every agent to read. "/etc/hosts looks wrong" is a message.
-                case var command when command.Split([' ', '\t'], 2)[0] is ['/', .. var name] && name.All(char.IsAsciiLetter):
+                case var command when IsCommand(command):
                     console.MarkupLine($"[yellow]Unknown command {Markup.Escape(input)}. Type /help. A line that starts with /word is never sent as a message.[/]");
                     break;
                 default:
-                    await SendAsync(room, input, cancellationToken);
+                    // Said before the message goes anywhere, so a paste that went wrong is visible.
+                    if (typed.Lines > 1)
+                        console.MarkupLine($"[dim]Sending {typed.Lines} lines as one message.[/]");
+                    await SendAsync(room, typed.Text, cancellationToken);
                     break;
             }
 
             console.WriteLine();
         }
     }
+
+    // Never trimmed as a whole before this: a block whose first line is blank must not promote its
+    // second line into a command or an address.
+    private static string FirstLine(string text)
+        => (text.IndexOf('\n') is var end && end < 0 ? text : text[..end]).Trim();
+
+    // A line whose first word is /word was meant as a command, with or without arguments, and a
+    // mistyped one must not be recorded for every agent to read. "/etc/hosts looks wrong" is a message.
+    private static bool IsCommand(string line)
+        => line.Split([' ', '\t'], 2)[0] is ['/', .. var name] && name.All(char.IsAsciiLetter);
 
     private async Task SendAsync(ChatRoom room, string input, CancellationToken cancellationToken)
     {
@@ -428,7 +448,7 @@ internal sealed class StartCommand(
         question?.Dispose();
     }
 
-    private string? ReadAnswer(CancellationToken closed)
+    private TypedInput? ReadAnswer(CancellationToken closed)
     {
         try
         {
@@ -479,12 +499,14 @@ internal sealed class StartCommand(
     // A read of the console cannot be abandoned. One that was interrupted is kept, and the line it
     // eventually returns answers the next prompt instead of being lost. The exception is a read
     // begun for a question that has been withdrawn: its line is said not to have gone anywhere.
+    // The whole of a pasted block is collected inside this one task, so a block is never half read
+    // and its later lines can never be left behind for the next prompt to pick up.
     /// <exception cref="OperationCanceledException">Cancelled while waiting for a line.</exception>
-    private string? ReadLine(CancellationToken cancellationToken = default)
+    private TypedInput? ReadLine(CancellationToken cancellationToken = default)
     {
         while (true)
         {
-            var read = _read ??= Task.Run(streams.ReadLine);
+            var read = _read ??= Task.Run(_input.Read);
             try
             {
                 read.Wait(cancellationToken);
@@ -507,7 +529,7 @@ internal sealed class StartCommand(
             if (line is null && interrupted)
                 continue;
 
-            if (withdrawn && !string.IsNullOrWhiteSpace(line))
+            if (withdrawn && !string.IsNullOrWhiteSpace(line?.Text))
             {
                 lock (_writing)
                 {
@@ -518,7 +540,7 @@ internal sealed class StartCommand(
                 continue;
             }
 
-            return line?.Trim();
+            return line;
         }
     }
 
@@ -533,11 +555,11 @@ internal sealed class StartCommand(
             console.Markup("[bold green]You:[/] ");
 
             // No agent is running while the question is open, so a shutdown has nothing to wait for.
-            string? input;
+            TypedInput? typed;
             _idle.Set();
             try
             {
-                input = ReadLine(cancellationToken);
+                typed = ReadLine(cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -549,9 +571,18 @@ internal sealed class StartCommand(
                 _idle.Reset();
             }
 
-            if (input is null)
+            if (typed is not { } answer)
                 return new HandoverDecision.Stop();
 
+            // What arrived as several lines is never a choice here: a pasted /go would send on a
+            // handover nobody has read. The whole block is dropped and the question asked again.
+            if (answer.Lines > 1)
+            {
+                console.MarkupLine($"[yellow]That arrived as {answer.Lines} lines, so it was not used and was not sent to anyone. Type /go or /stop on its own, or a message for {author} on one line.[/]");
+                continue;
+            }
+
+            var input = answer.Text;
             switch (input.ToLowerInvariant())
             {
                 case "/stop":

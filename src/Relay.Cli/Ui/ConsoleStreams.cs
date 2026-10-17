@@ -12,6 +12,13 @@ internal interface IConsoleStreams
 
     bool IsOutputRedirected { get; }
 
+    /// <summary>
+    /// Whether a key has been pressed and not yet read. How Relay tells a paste from typing: the
+    /// rest of a paste is already waiting when its first line is read. Always false when input is
+    /// redirected, where there are no keys and asking throws.
+    /// </summary>
+    bool InputWaiting { get; }
+
     /// <summary>Throws away keys already pressed and not yet read, so they cannot answer a question asked after them.</summary>
     void DiscardPendingInput();
 
@@ -24,6 +31,8 @@ internal sealed class ConsoleStreams : IConsoleStreams
     public bool IsInputRedirected => Console.IsInputRedirected;
 
     public bool IsOutputRedirected => Console.IsOutputRedirected;
+
+    public bool InputWaiting => !Console.IsInputRedirected && Console.KeyAvailable;
 
     public void DiscardPendingInput()
     {

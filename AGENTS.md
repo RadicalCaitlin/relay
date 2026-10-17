@@ -42,9 +42,29 @@ Key types:
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
 
-Message flow: `StartCommand` reads a line, `MessageRouter` records it in the room, and if it
+Message flow: `StartCommand` reads a message, `MessageRouter` records it in the room, and if it
 starts with `@id` the router calls that participant's `IAgentSession`. The reply, or a system
 notice explaining the failure, is recorded in the room and returned for display.
+
+Messages of several lines: `Relay.Cli.Ui.PastedInput` reads one message, not one line. Lines that
+are already waiting, or that arrive within `PastedInput.Grace`, are joined with newlines. A `\` at
+the end of a line is text: typing a message over several lines needs the input editor of #67.
+Rules that follow from it, each covered by tests:
+
+- Only the first line is read as a `/command` or for the mentions a message is addressed to, in
+  `StartCommand.RunLoopAsync` and in `MessageRouter.SendHumanMessageAsync`. Text pasted into a
+  message can never run a command or invite an agent.
+- The collected block is never trimmed as a whole, or a block beginning with a blank line would
+  promote its second line into the first. A single line is still trimmed, as it always was.
+- The whole block is read inside the one task `StartCommand.ReadLine` retains, so a block is never
+  read in half and no second reader is left behind. Interruption and withdrawal then differ, as
+  they already did for a single line: a read interrupted by Ctrl+C is **kept**, and the block it
+  finally returns goes to the next prompt in one piece; a block begun for a question that was then
+  **withdrawn** is discarded entirely, including its first line.
+- `ApprovalDesk` and the pause question refuse a block outright and ask again: an answer must be
+  typed at the question. See `docs/adr/0005-approvals.md`.
+- With input redirected there is no joining: every line is its own message,
+  so piped input and `RelayHarness` behave as they always have.
 
 Shared context: before calling the agent, the router asks the room what that agent has not seen
 and `SharedContext` puts it in front of the message as a labelled transcript. The decisions behind

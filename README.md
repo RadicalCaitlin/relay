@@ -71,6 +71,7 @@ Inside the chatroom:
 | `@codex <message>`  | Send the message to Codex and show its reply        |
 | `@claude @codex <message>` | Send the message to Claude, and let the agents named pass messages to each other |
 | any other text      | Record the message in the room; agents see it the next time you address them. A line whose first word is `/word` is always treated as a command, never recorded |
+| a paste of several lines | One message, with its line breaks (see below)   |
 | `/agents`           | Show the agents in this room                        |
 | `/history`          | Replay the room's message history                   |
 | `/clear`            | Clear the display (history is kept)                 |
@@ -87,6 +88,26 @@ Inside the chatroom:
 | `/help`             | Show the command list                               |
 | `/exit`             | Leave the chatroom                                  |
 | `Ctrl+C`            | Cancel the request or exchange in flight; exit when idle |
+
+### Messages of several lines
+
+Lines that arrive together are one message. Pasting several lines sends them as a single message
+with its line breaks, and Relay says how many lines it is sending before it sends them. Typing a
+message over several lines is not possible yet: Enter always sends (#67).
+
+- Only the **first** line is read as a `/command` or for the `@agents` the message is addressed to.
+  A `/command` pasted on a later line is text, and a mention there addresses nobody.
+- If the first line of a paste *is* a command, it runs with only that line, and Relay says how many
+  lines it did not use.
+- The answer to an approval question, and the choice at a pause, are never taken from input that
+  arrived as several lines. The whole block is dropped and the question asked again.
+- With input from a pipe or a file, every line is its own message, as before.
+
+Relay tells a paste from typing by how fast the lines arrive, because a terminal cannot tell
+`Console.ReadLine` that a paste is happening. A paste that arrives slowly — over a slow connection,
+or on a loaded machine — can still split, and the lines after the split are read as if you had
+typed them, so a `/command` among them runs. The line count Relay prints before it sends is how you
+see that this has happened.
 
 ### One shared conversation
 

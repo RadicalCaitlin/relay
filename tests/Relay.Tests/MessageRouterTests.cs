@@ -38,6 +38,74 @@ public class MessageRouterTests
     public void Mention_ignores_text_without_a_leading_target(string text)
         => Assert.False(Mention.TryParse(text, out _, out _));
 
+    // Only the first line addresses anyone, so text pasted into a message can never invite an agent
+    // (ADR 0002). Before pasted lines became one message, no human message could hold a newline.
+    [Fact]
+    public async Task A_mention_on_a_later_line_does_not_invite_anyone()
+    {
+        var claude = AddAgent("claude", new FakeSession("@codex\nover to you"));
+        var codex = AddAgent("codex");
+
+        // A first line holding nothing but a mention: the separator after it would otherwise run on
+        // into the next line, and the mention there would be read as a second agent being named.
+        var result = await _router.SendHumanMessageAsync(_room, "@claude\n@codex and you too");
+
+        // Codex was never invited, so Claude's handover to it is not delivered: had the second line
+        // counted as an invitation, the exchange would have run and Codex would have had a turn.
+        Assert.Equal("claude", result.Message.TargetId);
+        Assert.Empty(codex.Received);
+        // The line the user did not mean as an address is part of the message, where it belongs.
+        Assert.Contains("@codex and you too", Assert.Single(claude.Received));
+    }
+
+    [Fact]
+    public async Task A_mention_alone_on_a_later_line_does_not_address_anyone()
+    {
+        var claude = AddAgent("claude");
+
+        var result = await _router.SendHumanMessageAsync(_room, "\n@claude review this");
+
+        Assert.Equal(StopReason.NotAddressed, result.Reason);
+        Assert.Empty(claude.Received);
+        Assert.Null(Assert.Single(_room.Messages).TargetId);
+    }
+
+    [Fact]
+    public async Task The_lines_after_the_first_keep_their_own_spacing()
+    {
+        var claude = AddAgent("claude");
+
+        await _router.SendHumanMessageAsync(_room, "@claude fix this\n\n    indented\n");
+
+        Assert.Contains("fix this\n\n    indented\n", Assert.Single(claude.Received));
+    }
+
+    // A mention and nothing else is refused on one line, and must be refused when the lines after it
+    // are blank too: starting a turn with whitespace costs the user a turn and tells the agent nothing.
+    [Fact]
+    public async Task A_mention_followed_by_blank_lines_sends_nothing()
+    {
+        var claude = AddAgent("claude");
+
+        var result = await _router.SendHumanMessageAsync(_room, "@claude\n\n");
+
+        Assert.Equal(StopReason.NotSent, result.Reason);
+        Assert.Empty(claude.Received);
+        Assert.Contains(_room.Messages, m => m.Content.Contains("Nothing to send. Try: @claude <message>"));
+    }
+
+    // The break before a last line that is blank is the only one in the message, so reattaching the
+    // lines after the first has to put it back even when there is nothing after it.
+    [Fact]
+    public async Task A_message_ending_in_a_blank_line_keeps_it()
+    {
+        var claude = AddAgent("claude");
+
+        await _router.SendHumanMessageAsync(_room, "@claude fix this\n");
+
+        Assert.Contains("fix this\n", Assert.Single(claude.Received));
+    }
+
     [Fact]
     public async Task Untargeted_message_is_recorded_and_sent_to_nobody()
     {
