@@ -113,6 +113,15 @@ exercised. Codex documents both as loaded only from a trusted folder.
 - An agent can start another agent's turn only inside an exchange you opened; see the next section.
   Outside one, only text you type starts a turn. `/commands` are only ever read from your input: an
   agent reply containing `/reset` is displayed and nothing more.
+- **A `/command` you paste does not run.** Lines that arrive together are one message, and only its
+  first line is read as a command or for the agents it addresses. Pasting text holding
+  `/approvals off`, `/pause off` or `/reset` on any line but the first changes nothing: those lines
+  are message text. Relay says how many lines it is about to send, so a paste that went wrong is
+  visible before it goes anywhere. Where the first line of a paste is itself a command, it runs with
+  only that line, and Relay says how many lines it did not use.
+- **An approval answer and a choice at a pause must be typed at the question.** Input that arrived
+  as several lines is dropped whole, including its first line, and the question is asked again, so a
+  pasted `yes` or `/go` cannot allow a step or deliver a handover you have not read.
 
 ## Exchanges between agents
 

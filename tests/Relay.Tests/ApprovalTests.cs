@@ -3,6 +3,7 @@ using System.Text.Json;
 using Relay.Agents.Claude;
 using Relay.Agents.Codex;
 using Relay.Cli.Approvals;
+using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Spectre.Console.Testing;
 using static Relay.Tests.RelayHarness;
@@ -26,7 +27,10 @@ public sealed class ApprovalTests : IDisposable
 
     private static ApprovalRequest Wants(string tool, string input) => new(tool, Json(input));
 
-    /// <summary>A desk whose user types the given lines, one for each time they are asked. Null is a turn that ended first.</summary>
+    /// <summary>
+    /// A desk whose user types the given lines, one for each time they are asked. Null is a turn
+    /// that ended first, and one holding newlines is a block that arrived as several lines at once.
+    /// </summary>
     private sealed class Seat : IDisposable
     {
         private readonly Queue<string?> _typed;
@@ -54,11 +58,11 @@ public sealed class ApprovalTests : IDisposable
 
         public void Dispose() => Console.Dispose();
 
-        private string? Read()
+        private TypedInput? Read()
         {
             Events.Add($"read after: {Console.Output}");
             Assert.True(_typed.Count > 0, $"The user was asked more often than the test expected:\n{Console.Output}");
-            return _typed.Dequeue();
+            return _typed.Dequeue() is { } line ? new TypedInput(line, line.Split('\n').Length) : null;
         }
     }
 

@@ -17,9 +17,9 @@ internal sealed record AskingTurn(string Agent, CancellationToken Ended);
 /// </summary>
 /// <param name="gate">Held while writing, so a question and a line of activity cannot run into each other.</param>
 /// <param name="runningTurn">The turn in progress of an agent that can ask, or null when there is none.</param>
-/// <param name="readAnswer">The next line the user types, or null when its token was cancelled first.</param>
+/// <param name="readAnswer">The next thing the user types, or null when its token was cancelled first.</param>
 /// <param name="discardTypedAhead">Throws away what was typed before the question was shown.</param>
-internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingTurn?> runningTurn, Func<CancellationToken, string?> readAnswer, Action discardTypedAhead)
+internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingTurn?> runningTurn, Func<CancellationToken, TypedInput?> readAnswer, Action discardTypedAhead)
 {
     public const string QuestionTool = "AskUserQuestion";
 
@@ -89,7 +89,14 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingT
         while (true)
         {
             Write("    Allow it this once? Type [bold]yes[/] or [bold]no[/]. Ctrl+C cancels the turn.");
-            switch (Read(closed)?.ToLowerInvariant())
+            var typed = Read(closed);
+            if (typed is { Lines: > 1 } block)
+            {
+                RefuseBlock(block.Lines, "Type [bold]yes[/] or [bold]no[/] on one line.");
+                continue;
+            }
+
+            switch (typed?.Text.ToLowerInvariant())
             {
                 case "y" or "yes":
                     return new JsonObject { ["behavior"] = "allow", ["updatedInput"] = JsonNode.Parse(input.GetRawText()) }.ToJsonString();
@@ -129,7 +136,14 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingT
                 Write(options.Count == 0
                     ? "    Type your answer. /skip leaves it unanswered."
                     : $"    Type {(multiple ? "one or more numbers, separated by commas" : "a number")}, or an answer of your own. /skip leaves it unanswered.");
-                switch (Read(closed))
+                var given = Read(closed);
+                if (given is { Lines: > 1 } block)
+                {
+                    RefuseBlock(block.Lines, "Answer on one line, or type /skip.");
+                    continue;
+                }
+
+                switch (given?.Text)
                 {
                     case null or "/skip":
                         return ApprovalBridge.Refusal("The user chose not to answer. Carry on with your best judgement and say what you assumed.");
@@ -151,12 +165,18 @@ internal sealed class ApprovalDesk(IAnsiConsole console, Lock gate, Func<AskingT
         return new JsonObject { ["behavior"] = "allow", ["updatedInput"] = updated }.ToJsonString();
     }
 
-    private string? Read(CancellationToken closed)
+    private TypedInput? Read(CancellationToken closed)
     {
         lock (gate)
             console.Markup("[bold green]You:[/] ");
         return readAnswer(closed);
     }
+
+    // Nothing here is ever allowed except by an answer typed after the question was shown, and what
+    // arrived as several lines was pasted, not typed at this question. The whole block is dropped,
+    // including its first line, and the question asked again. See docs/adr/0005-approvals.md.
+    private void RefuseBlock(int lines, string retry)
+        => Write($"[yellow]    That arrived as {lines} lines, so it was not taken as an answer and was not sent to anyone. {retry}[/]");
 
     private void Write(params string[] lines)
     {

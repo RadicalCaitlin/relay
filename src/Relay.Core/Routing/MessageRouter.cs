@@ -107,7 +107,13 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
         ExchangeEvents? events = null,
         CancellationToken cancellationToken = default)
     {
-        if (!Mention.TryParse(text, out var first, out var body))
+        // Only the first line addresses anyone. Text pasted into a message can never invite an
+        // agent (ADR 0002), and a mention is not a mention for spanning the break between lines.
+        var newline = text.IndexOf('\n');
+        var head = newline < 0 ? text : text[..newline];
+        var tail = newline < 0 ? string.Empty : text[(newline + 1)..];
+
+        if (!Mention.TryParse(head, out var first, out var body))
             return new(room.AddMessage(ChatRoom.HumanId, SenderType.Human, text), [], StopReason.NotAddressed);
 
         // Further mentions count only while they name an agent in the room. Anything else is where
@@ -118,6 +124,10 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             targets.Add(another);
             body = rest;
         }
+
+        // The lines after the first are the message, with their own spacing and blank lines.
+        if (tail.Length > 0)
+            body = body.Length > 0 ? body + "\n" + tail : tail;
 
         // An unknown name is kept as typed, so the message is never mistaken for one to the whole room.
         var message = room.AddMessage(ChatRoom.HumanId, SenderType.Human, text, room.FindParticipant(first)?.Id ?? first);

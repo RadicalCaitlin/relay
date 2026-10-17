@@ -38,6 +38,46 @@ public class MessageRouterTests
     public void Mention_ignores_text_without_a_leading_target(string text)
         => Assert.False(Mention.TryParse(text, out _, out _));
 
+    // Only the first line addresses anyone, so text pasted into a message can never invite an agent
+    // (ADR 0002). Before pasted lines became one message, no human message could hold a newline.
+    [Fact]
+    public async Task A_mention_on_a_later_line_does_not_invite_anyone()
+    {
+        var claude = AddAgent("claude", new FakeSession("@codex\nover to you"));
+        var codex = AddAgent("codex");
+
+        var result = await _router.SendHumanMessageAsync(_room, "@claude review this\n@codex and you too");
+
+        // Codex was never invited, so Claude's handover to it is not delivered: had the second line
+        // counted as an invitation, the exchange would have run and Codex would have had a turn.
+        Assert.Equal("claude", result.Message.TargetId);
+        Assert.Empty(codex.Received);
+        // The line the user did not mean as an address is part of the message, where it belongs.
+        Assert.Contains("@codex and you too", Assert.Single(claude.Received));
+    }
+
+    [Fact]
+    public async Task A_mention_alone_on_a_later_line_does_not_address_anyone()
+    {
+        var claude = AddAgent("claude");
+
+        var result = await _router.SendHumanMessageAsync(_room, "\n@claude review this");
+
+        Assert.Equal(StopReason.NotAddressed, result.Reason);
+        Assert.Empty(claude.Received);
+        Assert.Null(Assert.Single(_room.Messages).TargetId);
+    }
+
+    [Fact]
+    public async Task The_lines_after_the_first_keep_their_own_spacing()
+    {
+        var claude = AddAgent("claude");
+
+        await _router.SendHumanMessageAsync(_room, "@claude fix this\n\n    indented\n");
+
+        Assert.Contains("fix this\n\n    indented\n", Assert.Single(claude.Received));
+    }
+
     [Fact]
     public async Task Untargeted_message_is_recorded_and_sent_to_nobody()
     {

@@ -29,6 +29,8 @@ public sealed class WorkspaceTrustPromptTests : IDisposable
 
     private sealed record Streams(bool IsInputRedirected, bool IsOutputRedirected) : IConsoleStreams
     {
+        public bool InputWaiting => false;
+
         public void DiscardPendingInput()
         {
         }
