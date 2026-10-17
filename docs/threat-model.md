@@ -312,9 +312,10 @@ watcher each agent it starts, with its start time, and each one that has finishe
 only Relay holds the other end of. That pipe closes when Relay ends, however it ends, and the
 watcher then kills the whole group of every agent still running. It ignores the Ctrl+C, Ctrl+\,
 Ctrl+Z and hangup the terminal sends it along with Relay, so it is still there when Relay goes.
-Before it kills anything it checks that the process with the agent's id started when the agent
-did, so a process that has taken that id since is left alone. A group's id is not reused while
-the group exists. If the watcher dies, Relay starts another at the next agent and tells it every
+Before it kills anything it checks that the process with the agent's id is still the agent: the
+leader of a group of that id in Relay's terminal session, or, before it has made its group, a
+process that started when Relay started the agent. A process that has taken that id since is left
+alone. A group's id is not reused while the group exists. If the watcher dies, Relay starts another at the next agent and tells it every
 agent still running. If Relay cannot start or reach a watcher, it stops the agent before sending
 it anything and says why.
 

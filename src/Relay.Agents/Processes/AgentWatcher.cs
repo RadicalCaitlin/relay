@@ -79,7 +79,7 @@ public static class AgentWatcher
     private static void Kill(int id, DateTime start)
     {
         using var process = Find(id);
-        if (process is not null && !StartedAt(process, start))
+        if (process is not null && !IsAgent(process, start))
             return;
 
         // While a process group exists its id is not given to a new process, so with no process of
@@ -110,6 +110,16 @@ public static class AgentWatcher
         }
     }
 
+    /// <summary>
+    /// The agent leads a process group of its own in Relay's session, which no process that took its
+    /// id later does unless that terminal starts a job. Before it has made its group it is still the
+    /// process Relay started, at the time Relay sent: macOS gives a process a new start time when it
+    /// becomes the agent, so after that the time no longer matches there.
+    /// </summary>
+    private static bool IsAgent(Process process, DateTime start)
+        => !OperatingSystem.IsWindows() && getpgid(process.Id) == process.Id && getsid(process.Id) == getsid(0)
+            || StartedAt(process, start);
+
     private static bool StartedAt(Process process, DateTime start)
     {
         try
@@ -128,6 +138,12 @@ public static class AgentWatcher
 
     [DllImport("libc", SetLastError = true)]
     private static extern int setpgid(int pid, int pgid);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int getpgid(int pid);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int getsid(int pid);
 
     [DllImport("libc", SetLastError = true)]
     private static extern int execvp(string file, string?[] argv);

@@ -86,6 +86,19 @@ public sealed class ForcedExitTests : IDisposable
         await AssertStopsAsync(child);
     }
 
+    [UnixFact]
+    public async Task The_watcher_kills_an_agent_in_its_own_group_though_its_start_time_changed_when_it_became_the_agent()
+    {
+        // As on macOS, where the start time Relay sent is no longer the one the agent has.
+        using var agent = Process.Start(RelayStartInfo(AgentWatcher.GroupCommand, "sh", "-c", "sleep 120 & echo $! > \"$0\"; wait", _pidFile))!;
+        var child = await Poll.ForProcessIdAsync(_pidFile);
+
+        await AgentWatcher.RunAsync(Input(AgentWatcher.Added(agent.Id, agent.StartTime - TimeSpan.FromMinutes(1))));
+
+        await AssertStopsAsync(child);
+        await Poll.UntilAsync(() => agent.HasExited, "the agent is gone", timeoutSeconds: 10);
+    }
+
     [Fact]
     public async Task The_watcher_leaves_an_agent_that_relay_said_has_finished()
     {
