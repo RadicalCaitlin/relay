@@ -9,6 +9,10 @@ namespace Relay.Tests;
 /// </summary>
 public class PastedInputTests
 {
+    // A reader that waits for input it will never be given does not block the suite: every test
+    // here decides in moments, so one that has not finished by now is broken.
+    private const int Patience = 10_000;
+
     private static readonly TimeSpan InsideTheWindow = TimeSpan.FromMilliseconds(20);
     private static readonly TimeSpan AfterTheWindow = TimeSpan.FromMilliseconds(60);
 
@@ -75,92 +79,96 @@ public class PastedInputTests
 
     private static Arrival Together(string line) => new(line, TimeSpan.Zero);
 
-    [Fact]
-    public void Lines_that_are_already_waiting_are_one_message()
+    // Off the test's own thread, so a reader that waits for a line it will never be given is caught
+    // by the timeout above rather than holding the thread for as long as the run lasts.
+    private static Task<TypedInput?> ReadAsync(PastedInput reader) => Task.Run(reader.Read);
+
+    [Fact(Timeout = Patience)]
+    public async Task Lines_that_are_already_waiting_are_one_message()
     {
         var reader = Reader(Together("@claude look at this"), Together("line two"), Together("line three"));
 
-        Assert.Equal(new TypedInput("@claude look at this\nline two\nline three", 3), reader.Read());
+        Assert.Equal(new TypedInput("@claude look at this\nline two\nline three", 3), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void A_line_that_arrives_inside_the_window_joins_the_message()
+    [Fact(Timeout = Patience)]
+    public async Task A_line_that_arrives_inside_the_window_joins_the_message()
     {
         var reader = Reader(Together("first"), new("second", InsideTheWindow));
 
-        Assert.Equal(new TypedInput("first\nsecond", 2), reader.Read());
+        Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void A_line_that_arrives_after_the_window_is_a_message_of_its_own()
+    [Fact(Timeout = Patience)]
+    public async Task A_line_that_arrives_after_the_window_is_a_message_of_its_own()
     {
         var reader = Reader(Together("first"), new("second", AfterTheWindow));
 
-        Assert.Equal(new TypedInput("first", 1), reader.Read());
-        Assert.Equal(new TypedInput("second", 1), reader.Read());
+        Assert.Equal(new TypedInput("first", 1), await ReadAsync(reader));
+        Assert.Equal(new TypedInput("second", 1), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void A_line_ending_in_a_backslash_waits_however_long_the_next_line_takes()
+    [Fact(Timeout = Patience)]
+    public async Task A_line_ending_in_a_backslash_waits_however_long_the_next_line_takes()
     {
         var reader = Reader(Together(@"first\"), new("second", TimeSpan.FromSeconds(30)));
 
-        Assert.Equal(new TypedInput("first\nsecond", 2), reader.Read());
+        Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void A_backslash_at_the_end_of_the_last_line_is_still_not_sent()
+    [Fact(Timeout = Patience)]
+    public async Task A_backslash_at_the_end_of_the_last_line_is_still_not_sent()
     {
         var reader = Reader(Together(@"a path ending in \"));
 
-        Assert.Equal(new TypedInput("a path ending in", 1), reader.Read());
+        Assert.Equal(new TypedInput("a path ending in", 1), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void The_blank_lines_and_indentation_of_a_paste_are_kept()
+    [Fact(Timeout = Patience)]
+    public async Task The_blank_lines_and_indentation_of_a_paste_are_kept()
     {
         var reader = Reader(Together("first"), Together(""), Together("    indented"), Together(""));
 
-        Assert.Equal(new TypedInput("first\n\n    indented\n", 4), reader.Read());
+        Assert.Equal(new TypedInput("first\n\n    indented\n", 4), await ReadAsync(reader));
     }
 
     // A block is never trimmed as a whole: trimming one that begins with a blank line would promote
     // its second line into the first, where a /command runs and a mention addresses someone.
-    [Fact]
-    public void A_block_that_begins_with_a_blank_line_keeps_it()
+    [Fact(Timeout = Patience)]
+    public async Task A_block_that_begins_with_a_blank_line_keeps_it()
     {
         var reader = Reader(Together(""), Together("/approvals off"));
 
-        Assert.Equal(new TypedInput("\n/approvals off", 2), reader.Read());
+        Assert.Equal(new TypedInput("\n/approvals off", 2), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void A_single_line_is_trimmed_as_a_typed_line_always_was()
+    [Fact(Timeout = Patience)]
+    public async Task A_single_line_is_trimmed_as_a_typed_line_always_was()
     {
         var reader = Reader(Together("   yes   "));
 
-        Assert.Equal(new TypedInput("yes", 1), reader.Read());
+        Assert.Equal(new TypedInput("yes", 1), await ReadAsync(reader));
     }
 
-    [Fact]
-    public void The_end_of_input_ends_the_block_and_then_the_reading()
+    [Fact(Timeout = Patience)]
+    public async Task The_end_of_input_ends_the_block_and_then_the_reading()
     {
         var reader = Reader(Together("first"), Together("second"));
 
-        Assert.Equal(new TypedInput("first\nsecond", 2), reader.Read());
-        Assert.Null(reader.Read());
+        Assert.Equal(new TypedInput("first\nsecond", 2), await ReadAsync(reader));
+        Assert.Null(await ReadAsync(reader));
     }
 
-    [Fact]
-    public void With_redirected_input_every_line_is_still_its_own_message()
+    [Fact(Timeout = Patience)]
+    public async Task With_redirected_input_every_line_is_still_its_own_message()
     {
         var clock = new TestClock();
         var reader = new PastedInput(
             new Typist(clock, redirected: true, Together("first"), Together(@"second\"), Together("third")),
             clock);
 
-        Assert.Equal(new TypedInput("first", 1), reader.Read());
-        Assert.Equal(new TypedInput(@"second\", 1), reader.Read());
-        Assert.Equal(new TypedInput("third", 1), reader.Read());
+        Assert.Equal(new TypedInput("first", 1), await ReadAsync(reader));
+        Assert.Equal(new TypedInput(@"second\", 1), await ReadAsync(reader));
+        Assert.Equal(new TypedInput("third", 1), await ReadAsync(reader));
     }
 }

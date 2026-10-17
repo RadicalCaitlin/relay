@@ -21,6 +21,10 @@ public sealed class StartCommandApprovalTests : IDisposable
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
 
+    // Every test here types at a chatroom that is reading the keyboard. One that stops reading, or
+    // waits for a line that will not come, fails on its own instead of holding up the suite.
+    private const int Limit = 60_000;
+
     private readonly TestConsole _console = new TestConsole().Interactive();
     private readonly Keyboard _keyboard = new();
     private readonly InMemoryRoomManager _rooms = new();
@@ -113,7 +117,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         Assert.Equal(0, await running.WaitAsync(Patience));
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_paste_of_several_lines_is_one_message_and_is_counted_before_it_is_sent()
     {
         string? shownWhenAsked = null;
@@ -135,7 +139,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_command_on_any_line_but_the_first_of_a_paste_does_nothing()
     {
         var (_, running) = Start(new AskingProvider(_ => new FakeSession("thanks")));
@@ -153,7 +157,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_command_on_the_first_line_of_a_paste_runs_with_only_that_line()
     {
         var (_, running) = Start(new AskingProvider(_ => new FakeSession("thanks")));
@@ -168,7 +172,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_pasted_answer_to_a_question_is_refused_whole_and_a_typed_answer_still_works()
     {
         var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -204,7 +208,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_pasted_choice_at_a_pause_is_refused_whole_and_a_typed_choice_still_works()
     {
         var codex = new FakeProvider("codex");
@@ -231,7 +235,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_line_typed_for_a_question_that_was_withdrawn_is_not_sent_to_the_room()
     {
         var asked = new TaskCompletionSource<NamedPipeClientStream>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -269,7 +273,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         Assert.False(Directory.Exists(provider.Folder));
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task A_question_still_open_when_the_turn_runs_out_of_time_is_withdrawn()
     {
         var asked = new TaskCompletionSource<NamedPipeClientStream>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -306,7 +310,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task The_folder_made_for_the_approval_tool_is_removed_when_an_agent_cannot_be_started()
     {
         var provider = new AskingProvider(_ => throw new InvalidOperationException("The session could not be created."));
@@ -317,7 +321,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         Assert.False(Directory.Exists(provider.Folder));
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task The_folder_made_for_the_approval_tool_is_removed_when_relay_is_told_to_stop()
     {
         var provider = new AskingProvider(_ => new FakeSession("pong"));
@@ -332,7 +336,7 @@ public sealed class StartCommandApprovalTests : IDisposable
         await LeaveAsync(running);
     }
 
-    [Fact]
+    [Fact(Timeout = Limit)]
     public async Task The_folder_made_for_the_approval_tool_is_removed_when_ctrl_c_ends_relay()
     {
         var provider = new AskingProvider(_ => new FakeSession("pong"));

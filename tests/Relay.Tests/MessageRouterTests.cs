@@ -46,7 +46,9 @@ public class MessageRouterTests
         var claude = AddAgent("claude", new FakeSession("@codex\nover to you"));
         var codex = AddAgent("codex");
 
-        var result = await _router.SendHumanMessageAsync(_room, "@claude review this\n@codex and you too");
+        // A first line holding nothing but a mention: the separator after it would otherwise run on
+        // into the next line, and the mention there would be read as a second agent being named.
+        var result = await _router.SendHumanMessageAsync(_room, "@claude\n@codex and you too");
 
         // Codex was never invited, so Claude's handover to it is not delivered: had the second line
         // counted as an invitation, the exchange would have run and Codex would have had a turn.
