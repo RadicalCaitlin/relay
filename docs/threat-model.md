@@ -295,7 +295,8 @@ secrets that do not look like known credential formats.
 
 ## Process lifetime
 
-Cancelling a request, or closing Relay normally, kills the agent's whole process tree first.
+Cancelling a request, or closing Relay normally, kills the agent's whole process tree first, and
+on macOS and Linux its whole process group too.
 
 On Windows, Relay also puts itself in a job object that Windows kills, with every process in it,
 when Relay's handle to it closes. Windows closes that handle however Relay ends, so a forced kill
@@ -305,17 +306,21 @@ stop when Relay does. The one exception is a process started with an explicit re
 its job, which some launchers and installers make. If Relay cannot join the job, it starts no agent
 and says why.
 
-macOS and Linux have no job object. Instead, Relay starts each agent in a process group of its own,
-which everything the agent starts joins and stays in, even after its parent exits. Relay also
-starts a second copy of itself, `relay agent-watcher`, with the first agent it runs. It tells the
-watcher each agent it starts, with its start time, and each one that has finished, over a pipe
-only Relay holds the other end of. That pipe closes when Relay ends, however it ends, and the
-watcher then kills the whole group of every agent still running. It ignores the Ctrl+C, Ctrl+\,
-Ctrl+Z and hangup the terminal sends it along with Relay, so it is still there when Relay goes.
-Before it kills anything it checks that the process with the agent's id is still the agent: the
-leader of a group of that id in Relay's terminal session, or, before it has made its group, a
-process that started when Relay started the agent. A process that has taken that id since is left
-alone. A group's id is not reused while the group exists. If the watcher dies, Relay starts another at the next agent and tells it every
+macOS and Linux have no job object. Instead, Relay starts each agent in a session and process
+group of its own, which everything the agent starts joins and stays in, even after its parent
+exits. The session has no terminal, so the terminal's Ctrl+C and hangup reach only Relay, and a
+tool that asks on the terminal, such as an ssh passphrase prompt or sudo, fails at once instead of
+waiting for input it can never get. Relay also starts a second copy of itself,
+`relay agent-watcher`, with the first agent it runs. Over a pipe only Relay holds the other end
+of, it tells the watcher each agent it starts, with its start time, and each one as soon as it
+has exited. That pipe closes when Relay ends, however it ends, and the watcher then kills the
+whole group of every agent still running. It ignores the Ctrl+C, Ctrl+\, Ctrl+Z and hangup the
+terminal sends it along with Relay, so it is still there when Relay goes. Before it kills
+anything it checks that the process with the agent's id is still the agent: the leader of a
+session of that id, or, before it has made its session, a process that started when Relay
+started the agent. A process that has taken that id since is left alone unless it too leads a
+session, and an agent's id stays on the list only until it exits. A group's id is not reused
+while the group exists. If the watcher dies, Relay starts another at once and tells it every
 agent still running. If Relay cannot start or reach a watcher, it stops the agent before sending
 it anything and says why.
 
@@ -333,8 +338,8 @@ See "Remaining risks" for the cases this does not cover.
 | **Codex shows the model an untrusted folder's `AGENTS.md` and skills.** A hostile repository can use them to steer Codex, within what your own Codex configuration lets it do without approval. | Inherent to Codex; Relay has no documented way to turn it off. |
 | **The trust list is an ordinary file in your profile.** Anything running as you, including an agent whose configuration allows it to write there, could add a folder to it. | Accepted for now; the same is true of the agents' own trust records. |
 | **Whether the trust prompt appears in a real terminal is not covered by an automated test.** The decision itself is tested in process: each answer, a yes that cannot be saved, and each reason not to ask. Those tests state whether the streams are redirected and whether the console can interact. Nothing tests that Relay reads those facts correctly from a real terminal, or that Spectre.Console reports a CI environment (`GITHUB_ACTIONS`, `TF_BUILD`) as one it cannot interact with. | Open. |
-| **A forced kill of Relay on macOS or Linux can still leave an agent running** in these cases: Relay is killed in the instant between starting an agent and telling the watcher about it; the watcher is killed too (`pkill -9 relay` matches both), or died and no agent has started since; or the agent moved a process out of its process group (`setsid`), which the watcher cannot find. On Windows only a process started with a request to leave Relay's job outlives a forced kill. | Open (#22). |
-| **Background processes started by an agent** outlive the turn and are not tracked. | Open (#20). |
+| **A forced kill of Relay on macOS or Linux can still leave an agent running** in these cases: Relay is killed in the instant between starting an agent and telling the watcher about it; the watcher is killed too (`pkill -9 relay` matches both), or died within a second of starting and no agent has started or finished since; or the agent moved a process out of its process group (`setsid`, `setpgid`), which the watcher cannot find. On Windows only a process started with a request to leave Relay's job outlives a forced kill. | Open (#22). |
+| **Background processes started by an agent** outlive the turn and are not tracked. On macOS and Linux they are in a session without a terminal, so closing the terminal does not stop them either. | Open (#20). |
 | **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it or inside an exchange you opened, and within what your configuration allows. |
 | **Inside an exchange, you do not read a reply before the next agent acts on it.** A reply steered by something the first agent read reaches the second without your review, for up to 5 handovers per message. | By design when pause mode is off. Bounded by who you named, the turn limit and Ctrl+C. Use `/pause on` to approve each handover. |
 | **One message can cost up to 6 agent turns** when it names several agents. | By design. The limit is fixed for now (#13). |

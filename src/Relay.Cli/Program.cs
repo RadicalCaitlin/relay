@@ -23,10 +23,10 @@ if (args is [ApprovalBridge.Command, var pipe])
 if (args is [AgentWatcher.Command])
     return await AgentWatcher.RunAsync(Console.OpenStandardInput());
 
-// Started by Relay itself on macOS and Linux, to become an agent in a process group of its own. The
+// Started by Relay itself on macOS and Linux, to become an agent in a session of its own. The
 // agent's standard streams are already these, so nothing may read or write them first.
-if (args is [AgentWatcher.GroupCommand, _, ..])
-    return AgentWatcher.RunInOwnGroup(args[1..]);
+if (args is [AgentWatcher.SessionCommand, _, ..])
+    return AgentWatcher.RunInOwnSession(args[1..], Console.OpenStandardError());
 
 Console.OutputEncoding = Encoding.UTF8;
 

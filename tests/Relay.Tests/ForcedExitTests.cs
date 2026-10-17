@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Relay.Agents.Processes;
+using Relay.Core.Agents;
 
 namespace Relay.Tests;
 
@@ -72,7 +73,7 @@ public sealed class ForcedExitTests : IDisposable
     [UnixFact]
     public async Task The_watcher_kills_what_an_agent_left_in_its_group_after_the_agent_has_exited()
     {
-        var startInfo = RelayStartInfo(AgentWatcher.GroupCommand, "sh", "-c", "sleep 120 & echo $! > \"$0\"; read line", _pidFile);
+        var startInfo = RelayStartInfo(AgentWatcher.SessionCommand, "sh", "-c", "sleep 120 & echo $! > \"$0\"; read line", _pidFile);
         startInfo.RedirectStandardInput = true;
         using var agent = Process.Start(startInfo)!;
         var start = agent.StartTime;
@@ -87,10 +88,10 @@ public sealed class ForcedExitTests : IDisposable
     }
 
     [UnixFact]
-    public async Task The_watcher_kills_an_agent_in_its_own_group_though_its_start_time_changed_when_it_became_the_agent()
+    public async Task The_watcher_kills_an_agent_in_its_own_session_though_its_start_time_changed_when_it_became_the_agent()
     {
         // As on macOS, where the start time Relay sent is no longer the one the agent has.
-        using var agent = Process.Start(RelayStartInfo(AgentWatcher.GroupCommand, "sh", "-c", "sleep 120 & echo $! > \"$0\"; wait", _pidFile))!;
+        using var agent = Process.Start(RelayStartInfo(AgentWatcher.SessionCommand, "sh", "-c", "sleep 120 & echo $! > \"$0\"; wait", _pidFile))!;
         var child = await Poll.ForProcessIdAsync(_pidFile);
 
         await AgentWatcher.RunAsync(Input(AgentWatcher.Added(agent.Id, agent.StartTime - TimeSpan.FromMinutes(1))));
@@ -136,30 +137,84 @@ public sealed class ForcedExitTests : IDisposable
     }
 
     [UnixFact]
+    public async Task Stopping_an_agent_also_stops_what_it_left_in_its_session()
+    {
+        // The subshell exits at once, so the sleep it started is no longer in the agent's tree.
+        using var cancel = new CancellationTokenSource();
+        var run = GuardedRunner().RunAsync(new ProcessRequest("sh", ["-c", "(sleep 120 & echo $! > \"$0\"); sleep 120", _pidFile]), cancel.Token);
+        var child = await Poll.ForProcessIdAsync(_pidFile);
+
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        await AssertStopsAsync(child);
+    }
+
+    [UnixFact]
+    public async Task An_agent_runs_in_a_session_of_its_own()
+    {
+        var result = await GuardedRunner().RunAsync(new ProcessRequest("sh", ["-c", "echo $$ $(ps -o sid= -p $$)"]));
+
+        var ids = result.StandardOutput.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(2, ids.Length);
+        Assert.Equal(ids[0], ids[1]);
+    }
+
+    [UnixFact]
+    public async Task An_agent_that_cannot_be_run_is_reported_with_the_reason()
+    {
+        var missing = _harness.PathTo("missing-agent");
+
+        var ex = await Assert.ThrowsAsync<AgentException>(() => GuardedRunner().RunAsync(new ProcessRequest(missing, [])));
+
+        Assert.Equal("Could not start 'missing-agent': No such file or directory", ex.Message);
+        Assert.False(ex.PromptMayHaveBeenRead);
+    }
+
+    [UnixFact]
+    public async Task A_watcher_that_dies_during_a_turn_is_replaced_at_once()
+    {
+        var relay = FakeRelay();
+        using var cancel = new CancellationTokenSource();
+        var run = new ProcessRunner(new ProcessRequest("sh", [relay])).RunAsync(new ProcessRequest("sleep", ["120"]), cancel.Token);
+        try
+        {
+            await Poll.UntilAsync(() => Logs(relay).Any(log => Poll.ReadShared(log).StartsWith('+')), "the first watcher is told about the agent");
+            var watcherLog = Logs(relay).Single();
+            var added = Poll.ReadShared(watcherLog);
+            // Past the time a watcher must have run to be started again straight away.
+            await Task.Delay(TimeSpan.FromSeconds(1.5));
+            await KillWatcherAsync(watcherLog);
+
+            await Poll.UntilAsync(() => Logs(relay).Any(log => log != watcherLog && Poll.ReadShared(log) == added), "a new watcher is told about the agent", timeoutSeconds: 10);
+        }
+        finally
+        {
+            await cancel.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+    }
+
+    [UnixFact]
     public async Task A_watcher_that_died_is_replaced_and_told_every_agent_still_running()
     {
-        // Stands in for Relay: it runs the agent as it is, and its watcher records what it is told.
-        var relay = _harness.PathTo("relay.sh");
-        File.WriteAllText(relay, "case \"$1\" in\nagent-group) shift; exec \"$@\" ;;\nagent-watcher) exec cat >> \"$(dirname \"$0\")/watcher-$$.log\" ;;\nesac\n");
+        var relay = FakeRelay();
         var runner = new ProcessRunner(new ProcessRequest("sh", [relay]));
         using var cancel = new CancellationTokenSource();
         var first = runner.RunAsync(new ProcessRequest("sleep", ["120"]), cancel.Token);
         try
         {
-            await Poll.UntilAsync(() => Logs().Any(log => Poll.ReadShared(log).StartsWith('+')), "the first watcher is told about the agent");
-            var watcherLog = Logs().Single();
+            await Poll.UntilAsync(() => Logs(relay).Any(log => Poll.ReadShared(log).StartsWith('+')), "the first watcher is told about the agent");
+            var watcherLog = Logs(relay).Single();
             var added = Poll.ReadShared(watcherLog);
-            using (var watcher = Process.GetProcessById(int.Parse(Path.GetFileNameWithoutExtension(watcherLog)["watcher-".Length..])))
-            {
-                watcher.Kill();
-                await watcher.WaitForExitAsync();
-            }
+            await KillWatcherAsync(watcherLog);
 
-            // Long enough to be seen running, so it is added too, and the watcher's death noticed.
+            // Long enough to be seen running, so it is added too. If the watcher died too soon to be
+            // replaced at once, this is what notices.
             var second = await runner.RunAsync(new ProcessRequest("sleep", ["0.5"]));
 
             Assert.Equal(0, second.ExitCode);
-            var replacement = Assert.Single(Logs(), log => log != watcherLog);
+            var replacement = Assert.Single(Logs(relay), log => log != watcherLog);
             Assert.Contains(added, File.ReadAllLines(replacement));
         }
         finally
@@ -167,8 +222,6 @@ public sealed class ForcedExitTests : IDisposable
             await cancel.CancelAsync();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
         }
-
-        string[] Logs() => Directory.GetFiles(Path.GetDirectoryName(relay)!, "watcher-*.log");
     }
 
     [UnixFact]
@@ -205,6 +258,26 @@ public sealed class ForcedExitTests : IDisposable
         ? Process.Start("powershell", ["-NoProfile", "-NonInteractive", "-Command",
             $"$p = Start-Process ping -ArgumentList '-n 120 127.0.0.1' -PassThru -NoNewWindow; Set-Content -LiteralPath '{_pidFile}' -Value $p.Id; $p.WaitForExit()"])
         : Process.Start("sh", ["-c", "sleep 120 & echo $! > \"$0\"; wait", _pidFile]);
+
+    private static ProcessRunner GuardedRunner()
+        => new(new ProcessRequest(new PathExecutableLocator().Find("dotnet")!, [Path.Combine(AppContext.BaseDirectory, "relay.dll")]));
+
+    /// <summary>Stands in for Relay: it runs the agent as it is, and its watcher records what it is told.</summary>
+    private string FakeRelay()
+    {
+        var relay = _harness.PathTo("relay.sh");
+        File.WriteAllText(relay, "case \"$1\" in\nagent-session) shift; exec \"$@\" ;;\nagent-watcher) exec cat >> \"$(dirname \"$0\")/watcher-$$.log\" ;;\nesac\n");
+        return relay;
+    }
+
+    private static string[] Logs(string relay) => Directory.GetFiles(Path.GetDirectoryName(relay)!, "watcher-*.log");
+
+    private static async Task KillWatcherAsync(string watcherLog)
+    {
+        using var watcher = Process.GetProcessById(int.Parse(Path.GetFileNameWithoutExtension(watcherLog)["watcher-".Length..]));
+        watcher.Kill();
+        await watcher.WaitForExitAsync();
+    }
 
     private static ProcessStartInfo RelayStartInfo(params string[] arguments)
     {

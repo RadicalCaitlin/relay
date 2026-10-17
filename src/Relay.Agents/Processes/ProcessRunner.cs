@@ -40,12 +40,11 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KillGrace = TimeSpan.FromSeconds(5);
 
-    private readonly ProcessRequest? _relay = OperatingSystem.IsWindows() ? null : relay;
     private readonly AgentWatch? _watch = OperatingSystem.IsWindows() || relay is null ? null : new(relay);
 
     public async Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo(_relay?.FileName ?? request.FileName)
+        var startInfo = new ProcessStartInfo(_watch?.Relay.FileName ?? request.FileName)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -57,12 +56,12 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             CreateNoWindow = true,
             WorkingDirectory = request.WorkingDirectory ?? string.Empty,
         };
-        if (_relay is not null)
+        if (_watch is not null)
         {
-            foreach (var argument in _relay.Arguments)
+            foreach (var argument in _watch.Relay.Arguments)
                 startInfo.ArgumentList.Add(argument);
-            startInfo.ArgumentList.Add(AgentWatcher.GroupCommand);
-            // A relative path is meant from Relay's working directory, but agent-group runs in the agent's.
+            startInfo.ArgumentList.Add(AgentWatcher.SessionCommand);
+            // A relative path is meant from Relay's working directory, but agent-session runs in the agent's.
             startInfo.ArgumentList.Add(request.FileName.Contains('/') ? Path.GetFullPath(request.FileName) : request.FileName);
         }
         foreach (var argument in request.Arguments)
@@ -89,13 +88,14 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             }
         }
 
-        using var process = new Process { StartInfo = startInfo };
+        var process = new Process { StartInfo = startInfo };
         try
         {
             process.Start();
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
+            process.Dispose();
             throw new AgentException($"Could not start '{name}': {ex.Message}", ex) { PromptMayHaveBeenRead = false };
         }
 
@@ -109,6 +109,7 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             {
                 // Nothing has been written to it yet, so it has read nothing.
                 await KillAsync(process);
+                Release(process);
                 throw NotCovered(name, ex);
             }
         }
@@ -137,7 +138,7 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             }
 
             var standardError = Snapshot(error);
-            if (_relay is not null && process.ExitCode == AgentWatcher.ExecFailedExitCode && standardError.StartsWith(AgentWatcher.ExecFailed, StringComparison.Ordinal))
+            if (_watch is not null && process.ExitCode == AgentWatcher.ExecFailedExitCode && standardError.StartsWith(AgentWatcher.ExecFailed, StringComparison.Ordinal))
                 throw new AgentException($"Could not start '{name}': {standardError[AgentWatcher.ExecFailed.Length..].Trim()}") { PromptMayHaveBeenRead = false };
 
             return new(process.ExitCode, Snapshot(output), standardError);
@@ -151,14 +152,35 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
             // Whatever went wrong, never leave the CLI running behind us.
             if (!process.HasExited)
                 await KillAsync(process);
-            // A kill can fail or time out, and an agent still running must stay on the watcher's list.
-            if (process.HasExited)
-                _watch?.Remove(process.Id);
 
             // A pump can outlive the run, reading from a descendant that kept the pipe open, and
             // the caller has moved on: nothing it reads from here on is part of this run.
             lines?.Stop();
+            Release(process);
         }
+    }
+
+    /// <summary>
+    /// Tells the watcher an agent has finished once it has, and not before: a kill can fail or time
+    /// out, and an agent still running must stay on the list, but an id left on it after the agent
+    /// exits could be given to another process.
+    /// </summary>
+    private void Release(Process process)
+    {
+        if (!process.HasExited)
+        {
+            _ = ReleaseWhenExitedAsync(process);
+            return;
+        }
+
+        _watch?.Remove(process.Id);
+        process.Dispose();
+    }
+
+    private async Task ReleaseWhenExitedAsync(Process process)
+    {
+        await process.WaitForExitAsync();
+        Release(process);
     }
 
     private static async Task PumpAsync(StreamReader reader, StringBuilder sink, OutputLines? lines = null)
@@ -273,15 +295,19 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
         }
     }
 
-    private static async Task KillAsync(Process process)
+    private async Task KillAsync(Process process)
     {
+        // What the agent left in its session when the process that started it exited is not in its
+        // tree, and without a terminal of its own the session gets no Ctrl+C or hangup from it either.
+        if (_watch is not null)
+            ProcessKill.Group(process.Id);
+        ProcessKill.Tree(process);
+
         try
         {
-            // The CLI is often a shim (cmd/node/sh) around the real process, so kill the whole tree.
-            process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync().WaitAsync(KillGrace);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or AggregateException or TimeoutException)
+        catch (TimeoutException)
         {
             // Best effort: a failed kill must not replace the cancellation or error already in flight.
         }
