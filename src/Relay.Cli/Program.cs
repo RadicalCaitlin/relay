@@ -20,8 +20,8 @@ if (args is [ApprovalBridge.Command, var pipe])
     return await ApprovalBridge.RunAsync(pipe, Console.OpenStandardInput(), Console.OpenStandardOutput());
 
 // Started by Relay itself on macOS and Linux, to stop the agents if Relay is killed.
-if (args is [AgentWatcher.Command])
-    return await AgentWatcher.RunAsync(Console.OpenStandardInput());
+if (args is [AgentWatcher.Command, var relayId] && int.TryParse(relayId, out var relayProcessId))
+    return await AgentWatcher.RunAsync(Console.OpenStandardInput(), relayProcessId);
 
 // Started by Relay itself on macOS and Linux, to become an agent in a session of its own. The
 // agent's standard streams are already these, so nothing may read or write them first.

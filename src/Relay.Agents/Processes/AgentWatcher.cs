@@ -29,7 +29,11 @@ public static class AgentWatcher
 
     private const int SigPipe = 13;
 
-    public static async Task<int> RunAsync(Stream input)
+    // Once Relay has gone, what it wrote before it went is still read, but no more than this is waited for.
+    private static readonly TimeSpan Drain = TimeSpan.FromMilliseconds(200);
+
+    /// <param name="relay">Relay's process id, or null when nothing but the input says Relay has gone.</param>
+    public static async Task<int> RunAsync(Stream input, int? relay = null)
     {
         // The terminal sends Ctrl+C, Ctrl+\, Ctrl+Z and its hangup to Relay and the watcher alike.
         // Relay decides what they mean; the watcher stays until Relay has gone.
@@ -38,14 +42,18 @@ public static class AgentWatcher
             : new Signals([PosixSignal.SIGINT, PosixSignal.SIGQUIT, PosixSignal.SIGTSTP, PosixSignal.SIGHUP, PosixSignal.SIGTERM]);
 
         using var stop = new CancellationTokenSource();
-        var orphaned = OrphanedAsync(stop.Token);
+        var orphaned = OrphanedAsync(relay, stop.Token);
 
         var agents = new Dictionary<int, DateTime>();
         using var reader = new StreamReader(input);
         while (true)
         {
             var read = reader.ReadLineAsync();
-            if (await Task.WhenAny(read, orphaned) != read || await read is not { } line)
+            if (!orphaned.IsCompleted)
+                await Task.WhenAny(read, orphaned);
+            if (!read.IsCompleted && await Task.WhenAny(read, Task.Delay(Drain)) != read)
+                break;
+            if (await read is not { } line)
                 break;
 
             if (line.StartsWith('+') && line[1..].Split(' ') is [var added, var ticks]
@@ -63,21 +71,20 @@ public static class AgentWatcher
     }
 
     /// <summary>
-    /// Ends once the watcher has been handed to a new parent, which happens when Relay dies. The
-    /// input alone is not enough: macOS has no atomic way to make a pipe close on exec, so a process
-    /// Relay starts at the same moment as the watcher can inherit Relay's end of the watcher's input
-    /// and keep it open after Relay has gone.
+    /// Ends once Relay is no longer the watcher's parent, which happens when Relay dies, even before
+    /// the watcher has started. The input alone is not enough: macOS has no atomic way to make a pipe
+    /// close on exec, so a process Relay starts at the same moment as the watcher can inherit Relay's
+    /// end of the watcher's input and keep it open after Relay has gone.
     /// </summary>
-    private static async Task OrphanedAsync(CancellationToken cancellationToken)
+    private static async Task OrphanedAsync(int? relay, CancellationToken cancellationToken)
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() || relay is null)
         {
             await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             return;
         }
 
-        var parent = getppid();
-        while (!cancellationToken.IsCancellationRequested && getppid() == parent)
+        while (!cancellationToken.IsCancellationRequested && getppid() == relay)
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
 
@@ -194,8 +201,8 @@ public static class AgentWatcher
 /// <param name="relay">How to start this same Relay; the watcher's command is added to its arguments.</param>
 internal sealed class AgentWatch(ProcessRequest relay)
 {
-    // A watcher that dies sooner than this is not started again until the next agent starts or
-    // finishes, so one that cannot run at all is not started over and over.
+    // A watcher that dies sooner than this is started again only once this much time has passed
+    // since it started, so one that cannot run at all is not started over and over.
     private static readonly TimeSpan SteadyRun = TimeSpan.FromSeconds(1);
 
     private readonly Lock _gate = new();
@@ -273,15 +280,25 @@ internal sealed class AgentWatch(ProcessRequest relay)
             StartAndTellAll();
     }
 
-    private void Replace(Process dead)
+    private async Task ReplaceAsync(Process dead)
     {
+        TimeSpan wait;
         lock (_gate)
         {
             if (_process != dead)
                 return;
 
             Discard();
-            if (_agents.Count == 0 || Stopwatch.GetElapsedTime(_started) < SteadyRun)
+            wait = SteadyRun - Stopwatch.GetElapsedTime(_started);
+        }
+
+        if (wait > TimeSpan.Zero)
+            await Task.Delay(wait);
+
+        lock (_gate)
+        {
+            // An agent that started or finished meanwhile may have started one already.
+            if (_process is not null || _agents.Count == 0)
                 return;
 
             try
@@ -332,11 +349,12 @@ internal sealed class AgentWatch(ProcessRequest relay)
         foreach (var argument in relay.Arguments)
             startInfo.ArgumentList.Add(argument);
         startInfo.ArgumentList.Add(AgentWatcher.Command);
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
 
         var process = Process.Start(startInfo)!;
         _started = Stopwatch.GetTimestamp();
         process.StandardInput.AutoFlush = true;
-        process.Exited += (_, _) => Replace(process);
+        process.Exited += (_, _) => _ = ReplaceAsync(process);
         process.EnableRaisingEvents = true;
         return process;
     }

@@ -146,7 +146,7 @@ public sealed class ForcedExitTests : IDisposable
         var relayDll = Path.Combine(AppContext.BaseDirectory, "relay.dll");
         // The sh stands in for Relay. The subshell feeding the watcher outlives it, as a process that
         // inherited Relay's end of the pipe would.
-        using var relay = Process.Start("sh", ["-c", "{ echo \"$0\"; sleep 30; } | \"$1\" \"$2\" agent-watcher",
+        using var relay = Process.Start("sh", ["-c", "{ echo \"$0\"; sleep 30; } | \"$1\" \"$2\" agent-watcher $$",
             AgentWatcher.Added(agent.Id, agent.StartTime), dotnet, relayDll])!;
         // Long enough for the runtime to start and the watcher to read the agent.
         await Task.Delay(TimeSpan.FromSeconds(3));
@@ -154,6 +154,32 @@ public sealed class ForcedExitTests : IDisposable
         relay.Kill(entireProcessTree: false);
 
         await AssertStopsAsync(child);
+    }
+
+    [UnixFact]
+    public async Task The_watcher_stops_the_agent_when_relay_died_before_the_watcher_had_started()
+    {
+        using var agent = StartWrapper();
+        var child = await Poll.ForProcessIdAsync(_pidFile);
+        int gone;
+        using (var exited = Process.Start("true")!)
+        {
+            await exited.WaitForExitAsync();
+            gone = exited.Id;
+        }
+
+        // Its parent is not the Relay it was told of, as when that Relay died while it was starting.
+        using var relay = Process.Start("sh", ["-c", "{ echo \"$0\"; sleep 30; } | \"$1\" \"$2\" agent-watcher \"$3\"",
+            AgentWatcher.Added(agent.Id, agent.StartTime), new PathExecutableLocator().Find("dotnet")!,
+            Path.Combine(AppContext.BaseDirectory, "relay.dll"), gone.ToString()])!;
+        try
+        {
+            await AssertStopsAsync(child);
+        }
+        finally
+        {
+            relay.Kill(entireProcessTree: true);
+        }
     }
 
     [UnixFact]
@@ -198,7 +224,7 @@ public sealed class ForcedExitTests : IDisposable
     }
 
     [UnixFact]
-    public async Task A_watcher_that_dies_during_a_turn_is_replaced_at_once()
+    public async Task A_watcher_that_dies_during_a_turn_is_replaced_without_waiting_for_another_agent()
     {
         var relay = FakeRelay();
         using var cancel = new CancellationTokenSource();
@@ -208,8 +234,7 @@ public sealed class ForcedExitTests : IDisposable
             await Poll.UntilAsync(() => Logs(relay).Any(log => Poll.ReadShared(log).StartsWith('+')), "the first watcher is told about the agent");
             var watcherLog = Logs(relay).Single();
             var added = Poll.ReadShared(watcherLog);
-            // Past the time a watcher must have run to be started again straight away.
-            await Task.Delay(TimeSpan.FromSeconds(1.5));
+            // Most likely within a second of its start, so the replacement waits until that second is up.
             await KillWatcherAsync(watcherLog);
 
             await Poll.UntilAsync(() => Logs(relay).Any(log => log != watcherLog && Poll.ReadShared(log) == added), "a new watcher is told about the agent", timeoutSeconds: 10);
@@ -255,7 +280,7 @@ public sealed class ForcedExitTests : IDisposable
     {
         using var agent = StartWrapper();
         var child = await Poll.ForProcessIdAsync(_pidFile);
-        var startInfo = RelayStartInfo(AgentWatcher.Command);
+        var startInfo = RelayStartInfo(AgentWatcher.Command, Environment.ProcessId.ToString());
         startInfo.RedirectStandardInput = true;
         using var watcher = Process.Start(startInfo)!;
         await watcher.StandardInput.WriteLineAsync(AgentWatcher.Added(agent.Id, agent.StartTime));

@@ -112,6 +112,13 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
                 Release(process);
                 throw NotCovered(name, ex);
             }
+
+            // At once, not when the run ends: that waits for the output, and meanwhile the agent's id
+            // could be given to another process.
+            var id = process.Id;
+            var watch = _watch;
+            process.Exited += (_, _) => watch.Remove(id);
+            process.EnableRaisingEvents = true;
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -161,9 +168,9 @@ public sealed class ProcessRunner(ProcessRequest? relay = null) : IProcessRunner
     }
 
     /// <summary>
-    /// Tells the watcher an agent has finished once it has, and not before: a kill can fail or time
-    /// out, and an agent still running must stay on the list, but an id left on it after the agent
-    /// exits could be given to another process.
+    /// Tells the watcher an agent has finished once it has, and not before, in case its exit was not
+    /// already reported: a kill can fail or time out, and an agent still running must stay on the
+    /// list, but an id left on it after the agent exits could be given to another process.
     /// </summary>
     private void Release(Process process)
     {
