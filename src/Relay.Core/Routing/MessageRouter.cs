@@ -125,18 +125,50 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             body = rest;
         }
 
+        var addressed = AddressEnd(head, body);
+
         // The lines after the first are the message, with their own spacing and blank lines. The
         // break goes back even when nothing follows it: a message ending in a blank line has no other.
         if (newline >= 0)
             body = body.Length > 0 ? body + "\n" + tail : tail;
 
+        // Every agent named must be able to take part, so the user never gets a narrower exchange
+        // than the one they asked for.
+        var invited = new List<(AgentParticipant Agent, IAgentSession Session)>();
+        string? refusal = null;
+        foreach (var target in targets)
+        {
+            if (room.FindParticipant(target) is not { } participant)
+            {
+                var known = string.Join(", ", room.Participants.Select(p => $"@{p.Id}"));
+                refusal = $"No agent named @{target} in this room. Agents here: {(known.Length > 0 ? known : "none")}.";
+                break;
+            }
+
+            if (participant.Session is not { } available)
+            {
+                refusal = $"{participant.DisplayName} is unavailable: {participant.UnavailableReason}.";
+                break;
+            }
+
+            if (!invited.Exists(i => i.Agent == participant))
+                invited.Add((participant, available));
+        }
+
+        var mentions = string.Join(' ', invited.Select(i => $"@{i.Agent.Id}"));
+        // Whitespace is nothing to send, however many lines of it: the lines after a mention can be
+        // blank, and a turn spent on them costs the user and tells the agent nothing.
+        if (refusal is null && string.IsNullOrWhiteSpace(body))
+            refusal = $"Nothing to send. Try: {mentions} <message>";
+
         // An unknown name is kept as typed, so the message is never mistaken for one to the whole room.
-        var message = room.AddMessage(ChatRoom.HumanId, SenderType.Human, text, room.FindParticipant(first)?.Id ?? first);
+        // Its mentions are marked as acted on only when it is sent.
+        var message = room.AddMessage(ChatRoom.HumanId, SenderType.Human, text, room.FindParticipant(first)?.Id ?? first, refusal is null ? addressed : 0);
         var recorded = new List<ChatMessage>();
 
-        ChatMessage Record(string senderId, SenderType senderType, string content, string? targetId = null)
+        ChatMessage Record(string senderId, SenderType senderType, string content, string? targetId = null, int addressLength = 0)
         {
-            var added = room.AddMessage(senderId, senderType, content, targetId);
+            var added = room.AddMessage(senderId, senderType, content, targetId, addressLength);
             recorded.Add(added);
             events?.Recorded?.Invoke(added);
             return added;
@@ -149,29 +181,8 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             return new(message, recorded, reason);
         }
 
-        // Every agent named must be able to take part, so the user never gets a narrower exchange
-        // than the one they asked for.
-        var invited = new List<(AgentParticipant Agent, IAgentSession Session)>();
-        foreach (var target in targets)
-        {
-            if (room.FindParticipant(target) is not { } participant)
-            {
-                var known = string.Join(", ", room.Participants.Select(p => $"@{p.Id}"));
-                return End(StopReason.NotSent, $"No agent named @{target} in this room. Agents here: {(known.Length > 0 ? known : "none")}.");
-            }
-
-            if (participant.Session is not { } available)
-                return End(StopReason.NotSent, $"{participant.DisplayName} is unavailable: {participant.UnavailableReason}.");
-
-            if (!invited.Exists(i => i.Agent == participant))
-                invited.Add((participant, available));
-        }
-
-        var mentions = string.Join(' ', invited.Select(i => $"@{i.Agent.Id}"));
-        // Whitespace is nothing to send, however many lines of it: the lines after a mention can be
-        // blank, and a turn spent on them costs the user and tells the agent nothing.
-        if (string.IsNullOrWhiteSpace(body))
-            return End(StopReason.NotSent, $"Nothing to send. Try: {mentions} <message>");
+        if (refusal is not null)
+            return End(StopReason.NotSent, refusal);
 
         var inExchange = invited.Count > 1;
         var turnLimit = inExchange ? _limits.MaxTurns : 1;
@@ -231,7 +242,7 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             // or not it is delivered.
             string? handoverText = null;
             var addressee = inExchange && Mention.TryParseHandover(response, out var named, out handoverText) ? room.FindParticipant(named) : null;
-            var reply = Record(speaker.Id, SenderType.Agent, response, addressee?.Id ?? ChatRoom.HumanId);
+            var reply = Record(speaker.Id, SenderType.Agent, response, addressee?.Id ?? ChatRoom.HumanId, addressee is null ? 0 : HandoverEnd(response));
 
             // Exactly what this turn showed the agent is now seen; anything said meanwhile is not.
             // An agent that will not remember this turn is shown the room afresh every time instead.
@@ -288,5 +299,27 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
                 (speaker, session) = next;
             }
         }
+    }
+
+    // Where the leading mentions end in the first line, given what is left after them: Mention
+    // trims the body, so it ends where the trimmed line does, and the separator before it (a comma
+    // or colon, or spaces) is not part of the address.
+    private static int AddressEnd(string head, string body)
+    {
+        var addressed = (body.Length == 0 ? head : head[..(head.TrimEnd().Length - body.Length)]).TrimEnd();
+        return addressed.EndsWith(',') || addressed.EndsWith(':') ? addressed.Length - 1 : addressed.Length;
+    }
+
+    // A handover's mention is the first '@'. One after blank lines is not on the first line, where
+    // the address is shown, so nothing is marked.
+    private static int HandoverEnd(string reply)
+    {
+        var at = reply.IndexOf('@');
+        if (reply.AsSpan(0, at).Contains('\n'))
+            return 0;
+        var end = at + 1;
+        while (end < reply.Length && (char.IsAsciiLetterOrDigit(reply[end]) || reply[end] is '_' or '-'))
+            end++;
+        return end;
     }
 }

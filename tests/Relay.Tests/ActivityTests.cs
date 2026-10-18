@@ -1,6 +1,7 @@
 using Relay.Agents.Claude;
 using Relay.Agents.Codex;
 using Relay.Agents.Processes;
+using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
 using Relay.Core.Routing;
@@ -48,7 +49,7 @@ public sealed class ActivityTests : IDisposable
 
     private static AgentActivity Note(string text) => new(AgentActivityKind.Note, text);
 
-    private static AgentActivity Action(string text) => new(AgentActivityKind.Action, text);
+    private static AgentActivity Action(string text, string? tool = null) => new(AgentActivityKind.Action, text, tool);
 
     private static AgentActivity Problem(string text) => new(AgentActivityKind.Problem, text);
 
@@ -93,12 +94,12 @@ public sealed class ActivityTests : IDisposable
         => Assert.Equal(
             [
                 Note("Reading hello.txt."),
-                Action("Read: /work/hello.txt"),
+                Action("Read: /work/hello.txt", "Read"),
                 Note("Writing out.txt."),
-                Action("Write: /work/out.txt"),
+                Action("Write: /work/out.txt", "Write"),
                 Problem("Write was not allowed: Claude requested permissions to write to /work/out.txt, but you haven't granted it yet."),
-                Action("PowerShell: git status --short"),
-                Action("TodoWrite"),
+                Action("PowerShell: git status --short", "PowerShell"),
+                Action("TodoWrite", "TodoWrite"),
                 Note("Read it, but could not write out.txt."),
             ],
             Lines(ClaudeStream).SelectMany(ClaudeOutputParser.ParseActivity));
@@ -160,8 +161,34 @@ public sealed class ActivityTests : IDisposable
         Assert.Equal("Read it, but could not write out.txt.", reply);
         Assert.Equal(7, reported.Count);
         Assert.Equal(Note("Reading hello.txt."), reported[0]);
-        Assert.Equal(Action("TodoWrite"), reported[^1]);
+        Assert.Equal(Action("TodoWrite", "TodoWrite"), reported[^1]);
     }
+
+    // Shaped like what Claude Code 2.1.273 prints when it runs a skill.
+    [Fact]
+    public void A_skill_is_shown_with_the_skill_it_ran()
+        => Assert.Equal(
+            [Action("Skill: code-review", "Skill")],
+            ClaudeOutputParser.ParseActivity("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_5","name":"Skill","input":{"skill":"code-review","args":"70 high"}}]}}"""));
+
+    // A tool that reports a skill and something more telling is shown with the more telling one.
+    [Fact]
+    public void A_skill_field_does_not_hide_a_command()
+        => Assert.Equal(
+            [Action("Run: dotnet test", "Run")],
+            ClaudeOutputParser.ParseActivity("""{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Run","input":{"skill":"tests","command":"dotnet test"}}]}}"""));
+
+    [Theory]
+    [InlineData("Skill: code-review", "Skill", "[bold]Skill[/]: code-review")]
+    [InlineData("Read: notes.txt", "Read", "[bold]Read[/]: notes.txt")]
+    [InlineData("Running: git status", null, "Running: git status")]
+    // Markup in the agent's own text stays text, whether in the name or after it.
+    [InlineData("[red]x[/]: y", "[red]x[/]", "[bold][[red]]x[[/]][/]: y")]
+    [InlineData("Read: [red]y[/]", "Read", "[bold]Read[/]: [[red]]y[[/]]")]
+    // A name the line does not begin with is not highlighted anywhere in it.
+    [InlineData("Read: Write", "Write", "Read: Write")]
+    public void Only_the_name_a_step_begins_with_is_highlighted(string text, string? tool, string markup)
+        => Assert.Equal(markup, RelayConsole.Step(new(AgentActivityKind.Action, text, tool), "/work"));
 
     [Fact]
     public async Task Session_reports_the_last_note_of_a_turn_that_failed_because_it_was_not_a_reply()

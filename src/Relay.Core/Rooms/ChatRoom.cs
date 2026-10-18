@@ -86,9 +86,9 @@ public sealed class ChatRoom(Guid id, string name)
         lock (_gate) return Find(id);
     }
 
-    public ChatMessage AddMessage(string senderId, SenderType senderType, string content, string? targetId = null)
+    public ChatMessage AddMessage(string senderId, SenderType senderType, string content, string? targetId = null, int addressLength = 0)
     {
-        var message = new ChatMessage(Guid.NewGuid(), Id, senderId, senderType, content, DateTimeOffset.UtcNow, targetId);
+        var message = new ChatMessage(Guid.NewGuid(), Id, senderId, senderType, content, DateTimeOffset.UtcNow, targetId, addressLength);
         lock (_gate) _messages.Add(message);
         return message;
     }

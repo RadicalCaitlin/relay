@@ -230,6 +230,22 @@ characters (so output cannot clear the screen, set the window title, or rewrite 
 removes bidirectional override characters (so it cannot reorder what you see), and escapes
 console markup. This covers agent replies, error text from the CLIs, and version strings.
 
+Agent replies are also rendered: headings, lists, bold, italic, code and quotes are shown in
+Relay's own styles (see [adr/0007-rendering-replies.md](adr/0007-rendering-replies.md)). The reply
+is cleaned first, then split into pieces, and each piece is escaped on its own before Relay wraps
+it in one of a fixed set of styles. So what an agent writes can choose which of those styles a
+piece of its text gets, and nothing more: not a colour of its own, not a link, and nothing that
+reaches the terminal as a control sequence. A test renders thousands of hostile and random
+replies and checks that the result always parses and holds no style Relay did not add. Relay
+never makes a link: `[text](url)` is shown as written. Rendering is display only; what is
+recorded in the room and sent to other agents is the text exactly as the agent wrote it.
+
+An `@mention` is highlighted only where Relay acted on it: the leading mentions your message was
+sent to, and an agent's handover to an agent in the room inside an exchange. The router records
+the span when it decides, and the display uses that span rather than reading the text again, so
+highlighting cannot be produced by an agent writing a mention anywhere else, or by characters
+that the display removes but the router did not.
+
 Folder names get a stricter version that also removes line breaks. On Linux and macOS a folder
 name can contain one, and could otherwise add lines that look like Relay's own, such as a fake
 "trusted" status, right when you are deciding whether to trust it.

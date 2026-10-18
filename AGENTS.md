@@ -40,6 +40,8 @@ Key types:
 - `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
 - `Relay.Cli.Commands`: `WorkspaceTrustPrompt` (whether this folder is trusted, asking the user if
   it must, and what the header says about it).
+- `Relay.Cli.Ui`: `RelayConsole` (cleaning and escaping untrusted text), `ReplyRenderer` (how a
+  message is shown), `PastedInput` (reading one message from the keyboard).
 - `Relay.Agents.Processes`: `IProcessRunner`, `IExecutableLocator`.
 - `Relay.Agents.Cli`: `CliAgentProvider` and `CliAgentSession`, shared by all CLI-backed providers.
 
@@ -150,6 +152,9 @@ The build must stay free of warnings and the tests must pass before a change is 
   signed in to, for two short turns. Run it when Claude Code is upgraded or its arguments change.
 - `ApprovalTests` asks the questions in process, through `ApprovalDesk`, for the same reason the
   folder-trust question is: with redirected streams Relay asks nobody.
+- `ReplyRendererTests` covers what is rendered and highlighted, and renders hostile and random
+  text to check that the output always parses and holds only Relay's own styles. Extend it for
+  every new rule.
 - `AutoModeTests` covers `/auto`: what each provider is passed and when, the mode Claude reports,
   and that a reply cannot switch it on.
 - `StartCommandApprovalTests` runs the chatroom itself in process, with a fake `IConsoleStreams`
@@ -226,6 +231,12 @@ and update it in the same change.
 - Treat agent output, CLI error text and version strings as untrusted: print them only through
   `RelayConsole.Safe`, which strips control and bidirectional characters and escapes markup.
   Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.
+- A message in the room is printed through `ReplyRenderer.Message`, which renders Markdown in
+  Relay's own styles: it cleans the text, splits it, and escapes each piece before wrapping it in
+  one of `ReplyRenderer.Styles`. Never add a style that takes a value from the text (a colour, a
+  link), never render inside a code span or block, and never render text that is sent to an
+  agent. See `docs/adr/0007-rendering-replies.md`.
+- Highlight an `@mention` only where Relay read it as an address.
 - Activity is for the user's eyes only. Never record it in the room, never include it in what an
   agent is sent, and never act on it: a reported refusal is shown, not approved or retried. Print
   it through `RelayConsole.ActivityLine`, which keeps each item to one short line. The one kind

@@ -205,8 +205,22 @@ Claude: I could not add src/Retry.cs: writing files needs your approval.
   no other agent sees them.
 - Claude's own reasoning is not shown, because Claude Code does not make it available. Codex
   reports what it says and the commands it runs.
+- The tool a step used is in bold, and a skill is shown with the skill it ran, as in
+  `Skill: code-review`.
 
 See [docs/adr/0004-agent-activity.md](docs/adr/0004-agent-activity.md) for the design.
+
+### How replies are shown
+
+Agents write Markdown, and Relay shows the common parts of it: headings in bold, `•` for bullet
+points, numbered lists, **bold**, *italic*, `code` in its own colour, code blocks behind a `│`
+with every line exactly as written, and quotes dimmed. Tables, links and anything else are shown
+as written. An `@mention` is highlighted only where Relay acted on it: the agents your message
+was sent to, and an agent's handover to another inside an exchange. `/history` shows
+messages the same way.
+
+The styles are Relay's own. Whatever a reply contains, it cannot choose colours, make links, or
+send anything to your terminal but text; see [docs/threat-model.md](docs/threat-model.md).
 
 ### Approving a step
 

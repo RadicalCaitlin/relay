@@ -875,26 +875,26 @@ internal sealed class StartCommand(
     // line that names the agent, so it cannot pass for a message in the room.
     private void WriteActivity(AgentActivity activity)
     {
-        var text = RelayConsole.ActivityLine(activity.Text, _workspace);
+        var text = RelayConsole.Step(activity, _workspace);
         lock (_writing)
             console.MarkupLine(activity.Kind == AgentActivityKind.Problem ? $"[yellow]  ! {text}[/]" : $"[dim]  - {text}[/]");
     }
 
     private void WriteMessage(ChatRoom room, ChatMessage message, bool includeHuman = false)
     {
-        var content = RelayConsole.Safe(message.Content);
         switch (message.SenderType)
         {
             case SenderType.Human when includeHuman:
-                console.MarkupLine($"[bold green]You:[/] {content}");
+                console.MarkupLine($"[bold green]You:[/] {ReplyRenderer.Message(message, console.Profile.Capabilities.Unicode)}");
                 break;
             case SenderType.Agent:
                 var name = room.FindParticipant(message.SenderId)?.DisplayName ?? message.SenderId;
                 var to = message.TargetId is { } id && room.FindParticipant(id) is { } addressee ? $" to {addressee.DisplayName}" : string.Empty;
-                console.MarkupLine($"[bold aqua]{Markup.Escape(name + to)}:[/] {content}");
+                console.MarkupLine($"[bold aqua]{Markup.Escape(name + to)}:[/] {ReplyRenderer.Message(message, console.Profile.Capabilities.Unicode)}");
                 break;
+            // Relay's own words, which may quote an agent's, so shown as written.
             case SenderType.System:
-                console.MarkupLine($"[yellow]! {content}[/]");
+                console.MarkupLine($"[yellow]! {RelayConsole.Safe(message.Content)}[/]");
                 break;
         }
     }
