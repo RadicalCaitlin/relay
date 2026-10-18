@@ -249,8 +249,9 @@ Claude: Saved the date to today.txt.
 - **Claude can also ask you a question**, with options to pick by number or an answer of your own.
   `/skip` leaves it unanswered.
 - **Your answers are for that agent only.** They are not part of the room.
-- **`/approvals off`** refuses every such step without asking, for when you are not watching.
-  A turn otherwise waits for your answer for as long as you take.
+- **A question waits until you answer it.** For when you are not watching, `/approvals off`
+  refuses every such step without asking, and `relay start --turn-timeout` stops a turn that has
+  waited too long, which withdraws its question.
 - **Only in a terminal, and only Claude.** With input or output redirected nobody is asked and
   the step is refused, as before. Codex cannot ask: a step its own settings do not allow fails.
 

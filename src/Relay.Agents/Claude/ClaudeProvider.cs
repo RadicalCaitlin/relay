@@ -58,13 +58,26 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
 
     public static string McpConfigPath(ApprovalTool tool) => Path.Combine(tool.Directory, "claude-mcp.json");
 
+    /// <summary>
+    /// The per-server <c>timeout</c> Relay gives its approval tool, so a question waits for as long as the user
+    /// takes. It also raises that server's idle window, which would otherwise abandon a question after 30 minutes.
+    /// Claude Code has no value that turns the limit off, and a larger one overflows its timer, which is a
+    /// 32-bit count of milliseconds (about 24.8 days).
+    /// </summary>
+    public const int ApprovalToolTimeoutMilliseconds = int.MaxValue;
+
     // A file, because the same JSON as an argument would have to survive cmd.exe's quoting on Windows.
     protected override void Prepare(AgentSessionOptions options)
     {
         if (options.ApprovalTool is not { } tool)
             return;
 
-        var server = new JsonObject { ["command"] = tool.Command, ["args"] = new JsonArray([.. tool.Arguments.Select(a => (JsonNode)a)]) };
+        var server = new JsonObject
+        {
+            ["command"] = tool.Command,
+            ["args"] = new JsonArray([.. tool.Arguments.Select(a => (JsonNode)a)]),
+            ["timeout"] = ApprovalToolTimeoutMilliseconds,
+        };
         var config = new JsonObject { ["mcpServers"] = new JsonObject { [ApprovalTool.ServerName] = server } };
         File.WriteAllText(McpConfigPath(tool), config.ToJsonString());
     }
