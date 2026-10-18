@@ -94,13 +94,14 @@ answers for the user, and an agent that cannot ask is run as before.**
 - A refused step no longer has to cost a turn, and the user decides with the command in front of
   them. A chained or piped command, which Claude Code will not allow by rule, can now be allowed
   once.
-- A turn now waits for the user for as long as they take. There is no time limit on a turn (#29),
-  so a user who walks away with approvals on finds the turn where they left it. For Claude this
-  needs the `timeout` Relay writes for its approval tool (#68): without it, Claude Code abandons a
-  tool call that has been silent for 30 minutes and Relay withdraws the question. Claude Code has
-  no value that turns the limit off, so Relay writes the largest its timer holds, 2147483647 ms
-  (about 24.8 days). It is set for Relay's own server only; Relay does not set
-  `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, which would apply to the user's other MCP servers too.
+- A turn now waits for the user for as long as they take. A turn has no time limit unless the user
+  starts Relay with `--turn-timeout` (#29), so a user who walks away with approvals on finds the
+  turn where they left it. For Claude this needs the `timeout` Relay writes for its approval tool
+  (#68): without it, Claude Code abandons a tool call that has been silent for 30 minutes and
+  Relay withdraws the question. Claude Code has no value that turns the limit off, so Relay writes
+  24 hours, the most `--turn-timeout` allows; a question left longer is withdrawn. It is set for
+  Relay's own server only; Relay does not set `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, which would
+  apply to the user's other MCP servers too.
 - What the user answers is said to Claude and is not a message in the room. It is not in
   `/history` and no other agent is sent it. ADR 0001's rule, that everything an agent is shown is
   a message in the room, now has this exception; the reply that follows is still the only thing
@@ -122,18 +123,20 @@ answers for the user, and an agent that cannot ask is run as before.**
   does. By hand, with a stand-in tool: a wait of 200 seconds, and a question with two parts
   answered and reported back correctly.
 - **The approval tool's `timeout` (#68), against Claude Code 2.1.273 on Windows**, with a stand-in
-  tool that answers after a set time and the idle window shortened to 60 seconds: with the
-  `timeout` Relay writes, a question answered after 150 seconds was applied; without it, Claude
-  Code abandoned the question after 60 seconds and asked again.
+  tool that answers after a set time. At Claude Code's default 30-minute idle window, with the
+  `timeout` Relay writes, a question answered after 35 minutes was applied. With the idle window
+  shortened to 60 seconds, a question answered after 150 seconds was applied; without the
+  `timeout`, Claude Code abandoned it after 60 seconds and asked again. A tool that never finishes
+  starting is still given up after about 30 seconds: the `timeout` does not lengthen startup.
 - **Covered by tests that need no agent:** every answer and every reason not to ask, what is
   shown and cut, hostile text, the questions, the tool as a real process speaking the protocol,
   an unreachable Relay, a request that cannot be read, and that nothing changes without a terminal.
 - **Run by hand, not by a test:** the chatroom's own wiring in a real terminal, which an automated
   test cannot reach because it redirects the streams. The maintainer ran it in a
   terminal on Windows and reported that it worked.
-- **Not verified:** a wait longer than 200 seconds through the chatroom itself. Several requests at once, as from
-  Claude's subagents; they are asked one after another. macOS and Linux with the real Claude Code;
-  CI runs the tests that need no agent there.
+- **Not verified:** a wait longer than 200 seconds through the chatroom itself. Several requests
+  at once, as from Claude's subagents; they are asked one after another. macOS and Linux with the
+  real Claude Code; CI runs the tests that need no agent there.
 
 ## Not done here
 

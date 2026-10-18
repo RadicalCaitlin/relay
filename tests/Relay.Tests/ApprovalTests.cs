@@ -457,7 +457,7 @@ public sealed class ApprovalTests : IDisposable
         Assert.Equal("relay_approval", server.Name);
         Assert.Equal(@"C:\Program Files\relay\relay.exe", server.Value.GetProperty("command").GetString());
         Assert.Equal(["approval-tool", "relay-approval-1"], server.Value.GetProperty("args").EnumerateArray().Select(a => a.GetString()));
-        Assert.Equal(2147483647, server.Value.GetProperty("timeout").GetInt32());
+        Assert.Equal(86_400_000, server.Value.GetProperty("timeout").GetInt32());
     }
 
     [Fact]

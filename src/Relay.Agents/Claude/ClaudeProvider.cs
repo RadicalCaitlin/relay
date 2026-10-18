@@ -61,10 +61,10 @@ public sealed class ClaudeProvider(IExecutableLocator locator, IProcessRunner ru
     /// <summary>
     /// The per-server <c>timeout</c> Relay gives its approval tool, so a question waits for as long as the user
     /// takes. It also raises that server's idle window, which would otherwise abandon a question after 30 minutes.
-    /// Claude Code has no value that turns the limit off, and a larger one overflows its timer, which is a
-    /// 32-bit count of milliseconds (about 24.8 days).
+    /// Claude Code has no value that turns the limit off. 24 hours, the most <c>--turn-timeout</c> allows, leaves
+    /// headroom below Node's largest timer delay (about 24.8 days), above which a timer fires at once.
     /// </summary>
-    public const int ApprovalToolTimeoutMilliseconds = int.MaxValue;
+    public const int ApprovalToolTimeoutMilliseconds = 24 * 60 * 60 * 1000;
 
     // A file, because the same JSON as an argument would have to survive cmd.exe's quoting on Windows.
     protected override void Prepare(AgentSessionOptions options)
