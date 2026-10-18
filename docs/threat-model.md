@@ -145,9 +145,15 @@ that agent. This is the one way an agent's output starts a process.
 - **A handover has to be unmistakable.** A reply that merely begins by naming an agent, as prose
   often does, is a reply to you. Outside an exchange no reply is read as addressed to an agent at
   all, so an agent cannot make its words appear in the room as a message to another one.
-- **It is bounded.** An exchange is at most 6 agent turns, counting the first and any that fail.
+- **It is bounded.** An exchange is at most 6 agent turns, counting the first and any that fail,
+  or the number you chose with `relay start --max-turns <N>`, which Relay refuses above 20.
   A reply addresses one agent, and one agent runs at a time, so an exchange is a chain that starts
-  at most 6 processes. Nothing an agent writes can raise the count or start a new exchange.
+  at most that many processes. Nothing an agent writes can raise the count or start a new exchange.
+- **The limit is yours alone.** It is read from your `relay start` command, checked before the
+  room opens, and fixed for the whole session: no `/command` changes it, nothing an agent writes
+  changes it, and nothing in the working folder is read for it. A higher limit means a longer run
+  with nobody watching when pause mode is off, which is why the number is yours to choose, has a
+  bound, and cannot be raised without restarting Relay.
 - **It stops on the first problem.** A failed turn ends the exchange; nobody else is tried.
 - **You can stop it.** Ctrl+C cancels the whole exchange and kills the running agent's process
   tree. Closing Relay does the same.
@@ -399,8 +405,8 @@ See "Remaining risks" for the cases this does not cover.
 | **A forced kill of Relay on macOS or Linux can still leave an agent running** in these cases: Relay is killed in the instant between starting an agent and telling the watcher about it; the watcher is killed too (`pkill -9 relay` matches both), or Relay is killed within a second of a watcher dying, before the replacement starts; or the agent moved a process out of its process group (`setsid`, `setpgid`), which the watcher cannot find. On macOS, an agent's child also survives in roughly 1 in 20 to 30 CI runs of the forced-kill tests, for a reason not yet found (#71). On Windows only a process started with a request to leave Relay's job outlives a forced kill. | Open (#22, #71). |
 | **Background processes started by an agent** outlive the turn and are not tracked. On macOS and Linux they are in a session without a terminal, so closing the terminal does not stop them either. | Open (#20). |
 | **Agents can influence each other through the room.** A reply from one agent is read by the others. Anything that steered the first, such as a file or web page it read, can try to steer the next. Labelling and escaping stop forgery, not persuasion: a model may still act on text it was told is only context. | Inherent to a shared conversation. An agent still only acts when you address it or inside an exchange you opened, and within what your configuration allows. |
-| **Inside an exchange, you do not read a reply before the next agent acts on it.** A reply steered by something the first agent read reaches the second without your review, for up to 5 handovers per message. | By design when pause mode is off. Bounded by who you named, the turn limit and Ctrl+C. Use `/pause on` to approve each handover. |
-| **One message can cost up to 6 agent turns** when it names several agents. | By design. The limit is fixed for now (#13). |
+| **Inside an exchange, you do not read a reply before the next agent acts on it.** A reply steered by something the first agent read reaches the second without your review, for one handover fewer than the session's turn limit per message. | By design when pause mode is off. Bounded by who you named, the turn limit and Ctrl+C. Use `/pause on` to approve each handover. |
+| **One message can cost up to 6 agent turns** when it names several agents, or as many as the `--max-turns` you chose at start-up, up to 20. | By design, and your choice: the number is set only by your own `relay start`, bounded at 20, and cannot change while Relay runs. A higher one costs more and runs longer unattended with pause mode off. |
 | **A role is not a restriction.** An agent told it is a reviewer can still change files if its own configuration allows it, and an agent may ignore its role. | By design. Relay never changes what an agent may do; limit that in the agent's own configuration. |
 | **You cannot type during a turn**, so between pauses the only way to interrupt an exchange is Ctrl+C. | Accepted for now. |
 | **A mistyped agent name after the first is sent as text.** `@claude @cdoex agree` goes to Claude alone, because a second `@word` that is not an agent is usually code (`@Override`). No exchange opens, so nothing is delivered that you did not ask for, but you get a narrower conversation than you meant. | Accepted. The waiting line shows a turn count only when an exchange is open. |

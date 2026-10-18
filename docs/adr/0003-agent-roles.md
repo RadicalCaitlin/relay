@@ -94,7 +94,7 @@ whom, as in ADR 0002, and roles only inform that choice. There is no round robin
 
 A sequence that Relay drove would start turns the user did not ask for one by one, which is the
 thing ADR 0002 bounded. With roles set, `@claude @codex add retry to the uploader` already
-produces implement-then-review when the roles say so, inside the same six turns.
+produces implement-then-review when the roles say so, inside the same exchange and its turn limit.
 
 ## Alternatives considered
 

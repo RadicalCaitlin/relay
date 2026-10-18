@@ -6,9 +6,19 @@ namespace Relay.Core.Routing;
 /// <summary>Limits on one exchange. See docs/adr/0002-agent-to-agent-exchanges.md.</summary>
 public sealed record ExchangeLimits
 {
-    public ExchangeLimits(int MaxTurns = 6)
+    /// <summary>Agent turns in one exchange when the user chooses no limit.</summary>
+    public const int DefaultTurns = 6;
+
+    /// <summary>
+    /// The largest limit the user may choose. Every turn runs another agent process, and with pause
+    /// off nobody need be watching, so the bound is what one message may cost. See docs/threat-model.md.
+    /// </summary>
+    public const int MaxAllowedTurns = 20;
+
+    public ExchangeLimits(int MaxTurns = DefaultTurns)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(MaxTurns, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(MaxTurns, MaxAllowedTurns);
         this.MaxTurns = MaxTurns;
     }
 
@@ -60,7 +70,8 @@ public abstract record HandoverDecision
 }
 
 /// <param name="TurnLimit">How many turns the exchange can have; 1 when the user named a single agent.</param>
-public sealed record TurnStarting(AgentParticipant Agent, int Turn, int TurnLimit);
+/// <param name="InExchange">Whether the user named several agents, so a reply may start another turn.</param>
+public sealed record TurnStarting(AgentParticipant Agent, int Turn, int TurnLimit, bool InExchange);
 
 public sealed class ExchangeEvents
 {
@@ -93,8 +104,9 @@ public sealed record RoutingResult(ChatMessage Message, IReadOnlyList<ChatMessag
 /// <summary>
 /// Routes a human message to the first agent it names, together with whatever was said in the room
 /// since that agent's last turn. When the message names several agents, a reply whose first line is
-/// a mention of one of them is delivered to it, up to a fixed number of turns. Nothing else an agent
-/// writes starts a turn. See docs/adr/0002-agent-to-agent-exchanges.md.
+/// a mention of one of them is delivered to it, up to the number of turns the router was given when
+/// it was built, which never changes. Nothing else an agent writes starts a turn. See
+/// docs/adr/0002-agent-to-agent-exchanges.md.
 /// </summary>
 public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? limits = null)
 {
@@ -205,7 +217,7 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
                 : SharedContext.Compose(room, speaker, earlier, catchUp.Withheld.Count, userText, _budget, exchange: note);
 
             room.MarkRoleStated(speaker);
-            events?.TurnStarting?.Invoke(new(speaker, turn, turnLimit));
+            events?.TurnStarting?.Invoke(new(speaker, turn, turnLimit, inExchange));
             var working = speaker;
             Action<AgentActivity>? onActivity = events?.Activity is { } report ? activity => report(working, activity) : null;
             string response;
@@ -271,7 +283,7 @@ public sealed class MessageRouter(ContextBudget? budget = null, ExchangeLimits? 
             }
 
             if (turn == turnLimit)
-                return End(StopReason.TurnLimit, $"Stopped after {turnLimit} agent turns, the limit for one exchange. {speaker.DisplayName}'s last message was addressed to {addressee.DisplayName} and was not delivered. To carry on: @{addressee.Id} @{speaker.Id} continue");
+                return End(StopReason.TurnLimit, $"Stopped after {turnLimit} agent turn{(turnLimit == 1 ? string.Empty : "s")}, the limit for one exchange. {speaker.DisplayName}'s last message was addressed to {addressee.DisplayName} and was not delivered. To carry on: @{addressee.Id} @{speaker.Id} continue");
 
             // Cancelling between two turns, or while the question is open, must not be followed by
             // another turn, whatever was answered.

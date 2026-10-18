@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-10
-- **Issues:** #7, #8
+- **Issues:** #7, #8, amended by #62
 
 ## Context
 
@@ -106,10 +106,11 @@ Claude addressed the last message above to you.
 
 - **An exchange is at most 6 agent turns**, counting the first and counting a turn that fails.
   That is three rounds between two agents. The number is a judgement, not a measurement, and is
-  the default of a limits record that rejects values below 1. Making it configurable belongs
-  with #13.
+  the default of a limits record that rejects values below 1. Since #62 the user may choose
+  another at start-up, from 1 to 20; see the amendment at the end of this record.
 - The count belongs to the exchange and only falls. Nothing an agent says can change it.
-- With no fan-out and a falling count, an exchange always ends: it starts at most 6 processes.
+- With no fan-out and a falling count, an exchange always ends: it starts at most as many
+  processes as the limit allows.
 
 ### Why an exchange stops
 
@@ -179,7 +180,8 @@ do with it:
 ### What the user sees
 
 - Each reply is shown when it arrives, not when the exchange ends, with who it was addressed to.
-- Before each turn the waiting line names the agent and the turn (`turn 2 of 6`).
+- Before each turn the waiting line names the agent and the turn (`turn 2 of 6`, with the session's
+  own limit after "of").
 
 ## Alternatives considered
 
@@ -191,7 +193,7 @@ do with it:
 | Always ask the user to approve each handover | Safest, and available as pause mode. As the only behaviour it is close to what they do today by typing `@codex` themselves. |
 | Let the user edit a handover at a pause | The recipient would be shown the user's words under an agent's name, and a terminal line is a poor editor for a long message. |
 | Deliver on an empty line at a pause | A key pressed during the previous turn would approve it. |
-| Give the user a fresh turn count for each message typed at a pause | Simpler to state one rule: an exchange is at most 6 turns, however it is steered. |
+| Give the user a fresh turn count for each message typed at a pause | Simpler to state one rule: an exchange is at most the session's limit of turns, however it is steered. |
 | Put the handed-over message after the transcript, where the user's message goes | An agent's words would sit where the recipient is told the user speaks. |
 | Let an agent address several agents at once | Turns a chain into a tree, needs concurrent turns in one working folder, and multiplies cost. |
 | Detect loops by repetition or lack of progress | Guesswork. The count is the bound and is simple to explain. |
@@ -203,8 +205,9 @@ do with it:
 ## Consequences
 
 - **"Agents never trigger each other" stops being true.** It becomes: an agent can start another
-  agent's turn only inside an exchange the user opened by naming both, and at most 5 times per
-  message. `docs/threat-model.md` and `AGENTS.md` change in the same pull request as the code.
+  agent's turn only inside an exchange the user opened by naming both, and at most one time fewer
+  than the session's turn limit per message. `docs/threat-model.md` and `AGENTS.md` change in the
+  same pull request as the code.
 - **The user no longer reads every reply before the next agent acts on it.** Inside an exchange a
   reply steered by something the agent read reaches the next agent unreviewed. Attribution still
   cannot be forged and the reply never passes for the user's, but as ADR 0001 says, that stops
@@ -213,7 +216,8 @@ do with it:
   has sent it on.
 - **Pausing is a decision the router asks for, not console code.** `Relay.Core` takes a callback
   that answers deliver, stop, or send this back to the author; the chat supplies the prompt.
-- **One message can cost up to 6 agent turns** instead of one.
+- **One message can cost up to 6 agent turns** instead of one, or up to the limit the user chose
+  at start-up, at most 20.
 - **Naming two agents is not a broadcast.** Someone who types `@claude @codex thoughts?` and
   expects two answers gets Claude's, and Codex's only if Claude hands over.
 - **A handover cut off by the limit is not lost.** It is in the room and reaches its addressee the
@@ -223,3 +227,25 @@ do with it:
 - **Routing is not merged without the limit.** The two issues may be separate pull requests, but
   the count lands with or before the first routed reply.
 - Roles and speaking order (#9), streaming (#10) and approvals (#11) are untouched.
+
+## Amendment: the user chooses the limit (#62, 2026-10-18)
+
+The limit above stays 6 by default. `relay start --max-turns <N>` sets it for the session instead,
+where N is a whole number from 1 to **20**. Everything else in this record holds unchanged.
+
+- **20 is the bound** because every turn is another agent process that runs with the user's
+  permissions, and with pause mode off nobody need be watching any of them. Ten rounds between two
+  agents covers implement, review, fix and re-review with room to spare; past that the user is
+  better served by reading the room and sending another message. The bound is enforced in
+  `ExchangeLimits`, so it holds for any caller, not only the command line.
+- **Only the user sets it, and only at start-up.** The value is checked before the room opens and
+  the router is built once with it. There is no command, setting file, environment variable or
+  workspace file that changes it, and nothing an agent writes can raise it. To run longer, the
+  user restarts Relay. This keeps the decision in front of the person who pays for the turns, as
+  the rest of this record requires.
+- A limit of 1 is allowed and means a handover is never delivered: the first agent answers and the
+  exchange stops with the usual notice. The waiting line still shows `turn 1 of 1`, so the user can
+  see why.
+- What the user is told: `/help` states the session's limit, the header states it when it was
+  chosen, and the notice at the limit says how to allow more, except at 20 where it says that is
+  the most Relay allows.

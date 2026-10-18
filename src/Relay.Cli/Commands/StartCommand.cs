@@ -16,7 +16,6 @@ internal sealed class StartCommand(
     IAnsiConsole console,
     AgentDiscoveryService discovery,
     IRoomManager rooms,
-    MessageRouter router,
     WorkspaceTrustPrompt trustPrompt,
     IConsoleStreams streams) : AsyncCommand<StartCommand.Settings>
 {
@@ -38,10 +37,17 @@ internal sealed class StartCommand(
         [Description("Stop an agent whose turn runs longer than this, such as 90s, 30m or 2h. Off by default: a turn runs until it ends or you press Ctrl+C.")]
         public string? TurnTimeout { get; init; }
 
+        // The bound is stated here as a number because an attribute takes only constant text.
+        [CommandOption("--max-turns <N>")]
+        [Description("How many agent turns one exchange may run, from 1 to 20. Defaults to 6. Only you can set it, only here, and it holds for the whole session.")]
+        public string? MaxTurns { get; init; }
+
         public override ValidationResult Validate()
         {
             if (TurnTimeout is not null && !TryParseTime(TurnTimeout, out _))
                 return ValidationResult.Error("--turn-timeout must be a whole number of seconds, minutes or hours, such as 90s, 30m or 2h, and no more than 24h.");
+            if (MaxTurns is not null && !TryParseTurns(MaxTurns, out _))
+                return ValidationResult.Error($"--max-turns must be a whole number from 1 to {ExchangeLimits.MaxAllowedTurns}, such as --max-turns 10.");
             if (Workspace is not null)
             {
                 if (ResolveWorkspace(Workspace) is not { } folder)
@@ -126,6 +132,13 @@ internal sealed class StartCommand(
             time = TimeSpan.FromSeconds(seconds);
             return true;
         }
+
+        // Digits only: a sign, a decimal point, spaces or a number too large for an int are all
+        // refused rather than rounded or wrapped into something Relay would then run.
+        internal static bool TryParseTurns(string text, out int turns)
+            => int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out turns)
+                && turns >= 1
+                && turns <= ExchangeLimits.MaxAllowedTurns;
     }
 
     // Windows allows about five seconds between a console-close notification and termination.
@@ -143,6 +156,9 @@ internal sealed class StartCommand(
     private CancellationTokenSource? _turn;
     private string _folderStatus = string.Empty;
     private string? _turnTimeout;
+    // Settled before the room opens and never written again: nothing in the session can raise it.
+    private int _maxTurns = ExchangeLimits.DefaultTurns;
+    private bool _maxTurnsChosen;
     private string _workspace = string.Empty;
     private bool _pause;
     // Read by a session when its turn starts, on whichever thread runs it.
@@ -181,6 +197,14 @@ internal sealed class StartCommand(
         _folderStatus = trust.Status;
         _turnTimeout = settings.TurnTimeout;
         TimeSpan? turnTimeout = settings.TurnTimeout is { } text && Settings.TryParseTime(text, out var time) ? time : null;
+
+        // The router is built here, once, with the limit the user asked for at start-up. There is
+        // nowhere to set it afterwards, so no command, no agent and nothing in the workspace can
+        // change how long an exchange may run (ADR 0002).
+        _maxTurnsChosen = settings.MaxTurns is not null;
+        if (settings.MaxTurns is { } chosenTurns && Settings.TryParseTurns(chosenTurns, out var turns))
+            _maxTurns = turns;
+        var router = new MessageRouter(limits: new ExchangeLimits(_maxTurns));
 
         // Without a person who can both see a question and answer it, nothing is put to anyone,
         // and an agent's CLI refuses what its own settings do not allow, as it always has.
@@ -222,7 +246,7 @@ internal sealed class StartCommand(
                 room.AddParticipant(AgentParticipant.Create(agent, options));
 
             WriteHeader(room);
-            await RunLoopAsync(room, cancellationToken);
+            await RunLoopAsync(room, router, cancellationToken);
         }
         finally
         {
@@ -265,7 +289,7 @@ internal sealed class StartCommand(
         return new ApprovalTool(host, arguments, folder);
     }
 
-    private async Task RunLoopAsync(ChatRoom room, CancellationToken cancellationToken)
+    private async Task RunLoopAsync(ChatRoom room, MessageRouter router, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -387,7 +411,7 @@ internal sealed class StartCommand(
                     // Said before the message goes anywhere, so a paste that went wrong is visible.
                     if (typed.Lines > 1)
                         console.MarkupLine($"[dim]Sending {typed.Lines} lines as one message.[/]");
-                    await SendAsync(room, typed.Text, cancellationToken);
+                    await SendAsync(room, router, typed.Text, cancellationToken);
                     break;
             }
 
@@ -405,7 +429,7 @@ internal sealed class StartCommand(
     private static bool IsCommand(string line)
         => line.Split([' ', '\t'], 2)[0] is ['/', .. var name] && name.All(char.IsAsciiLetter);
 
-    private async Task SendAsync(ChatRoom room, string input, CancellationToken cancellationToken)
+    private async Task SendAsync(ChatRoom room, MessageRouter router, string input, CancellationToken cancellationToken)
     {
         using var turn = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _turn = turn;
@@ -430,7 +454,9 @@ internal sealed class StartCommand(
                     }
 
                     var name = Markup.Escape(starting.Agent.DisplayName);
-                    console.MarkupLine(starting.TurnLimit > 1
+                    // The count is shown in an exchange even when the limit is one, so the user can
+                    // see at once why a reply to another agent went nowhere.
+                    console.MarkupLine(starting.InExchange
                         ? $"[dim]Waiting for {name}... (turn {starting.Turn} of {starting.TurnLimit}, Ctrl+C to stop the exchange)[/]"
                         : $"[dim]Waiting for {name}... (Ctrl+C to cancel)[/]");
                 },
@@ -474,6 +500,12 @@ internal sealed class StartCommand(
 
             if (result.Reason == StopReason.NotAddressed)
                 console.MarkupLine("[dim]Recorded. Agents will see it the next time you address them, e.g. @claude hello[/]");
+
+            // Said after the router's own notice, which names the agents to carry on with.
+            if (result.Reason == StopReason.TurnLimit)
+                console.MarkupLine(_maxTurns < ExchangeLimits.MaxAllowedTurns
+                    ? $"[dim]An exchange is at most {_maxTurns} agent turns. To allow more, start Relay with a larger --max-turns, up to {ExchangeLimits.MaxAllowedTurns}.[/]"
+                    : $"[dim]An exchange is at most {_maxTurns} agent turns, the most Relay allows.[/]");
 
             if (result.Reason == StopReason.TimedOut)
                 console.MarkupLine($"[dim]Each turn may run for {Markup.Escape(_turnTimeout!)}. To allow longer turns, start Relay with a larger --turn-timeout, or without it for no limit. {Markup.Escape(recipient!.DisplayName)} keeps its conversation.[/]");
@@ -847,6 +879,9 @@ internal sealed class StartCommand(
             console.MarkupLine($"[dim]{DescribeAuto(room)}{(_auto ? string.Empty : " Type /auto on to switch it on.")}[/]");
         if (_turnTimeout is not null)
             console.MarkupLine($"[dim]An agent whose turn runs longer than {Markup.Escape(_turnTimeout)} is stopped.[/]");
+        // The default is in /help; a limit the user chose is said where they will see it at once.
+        if (_maxTurnsChosen)
+            console.MarkupLine($"[dim]An exchange between agents is at most {_maxTurns} agent turns, as you asked at start-up.[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
     }
@@ -868,6 +903,7 @@ internal sealed class StartCommand(
             console.MarkupLine($"[bold]@{Markup.Escape(participant.Id)} <message>[/]  Send a message to {Markup.Escape(participant.DisplayName)}");
         if (room.Participants.Where(p => p.Session is not null).ToList() is [var first, var second, ..])
             console.MarkupLine($"[bold]@{Markup.Escape(first.Id)} @{Markup.Escape(second.Id)} <message>[/]  Send it to {Markup.Escape(first.DisplayName)}, and let the agents named pass messages to each other. Only the first one is asked; the others speak if they are addressed.");
+        console.MarkupLine($"[dim]An exchange between agents is at most {_maxTurns} agent turns for this session{(_maxTurnsChosen ? string.Empty : " (the default)")}. Only --max-turns at start-up changes it, from 1 to {ExchangeLimits.MaxAllowedTurns}.[/]");
         console.MarkupLine("[dim]Everything said in this room, by you or by an agent, is shown to each agent the next time you address it.[/]");
     }
 
