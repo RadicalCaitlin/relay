@@ -43,6 +43,7 @@ public static class AgentWatcher
 
         using var stop = new CancellationTokenSource();
         var orphaned = OrphanedAsync(relay, stop.Token);
+        Trace($"watcher start relay={relay} ppid={(OperatingSystem.IsWindows() ? 0 : getppid())}");
 
         var agents = new Dictionary<int, DateTime>();
         using var reader = new StreamReader(input);
@@ -51,10 +52,19 @@ public static class AgentWatcher
             var read = reader.ReadLineAsync();
             if (!orphaned.IsCompleted)
                 await Task.WhenAny(read, orphaned);
+            if (orphaned.IsCompleted)
+                Trace($"watcher orphaned ppid={(OperatingSystem.IsWindows() ? 0 : getppid())} readDone={read.IsCompleted}");
             if (!read.IsCompleted && await Task.WhenAny(read, Task.Delay(Drain)) != read)
+            {
+                Trace("watcher drain timed out");
                 break;
+            }
             if (await read is not { } line)
+            {
+                Trace("watcher eof");
                 break;
+            }
+            Trace($"watcher read {line}");
 
             if (line.StartsWith('+') && line[1..].Split(' ') is [var added, var ticks]
                 && int.TryParse(added, CultureInfo.InvariantCulture, out var id)
@@ -65,9 +75,36 @@ public static class AgentWatcher
         }
 
         await stop.CancelAsync();
+        Trace($"watcher killing [{string.Join(' ', agents.Keys)}]");
         foreach (var (id, start) in agents)
-            Kill(id, start);
+        {
+            try
+            {
+                Kill(id, start);
+            }
+            catch (Exception ex)
+            {
+                Trace($"watcher kill {id} threw {ex}");
+                throw;
+            }
+        }
+        Trace("watcher done");
         return 0;
+    }
+
+    // TEMPORARY DIAGNOSTIC for the intermittent macOS failure; removed once it is understood.
+    internal static void Trace(string message)
+    {
+        if (Environment.GetEnvironmentVariable("RELAY_WATCHER_TRACE") is { Length: > 0 } path)
+        {
+            try
+            {
+                File.AppendAllText(path, $"{DateTime.UtcNow:HH:mm:ss.fff} [{Environment.ProcessId}] {message}\n");
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     /// <summary>
@@ -118,13 +155,20 @@ public static class AgentWatcher
     private static void Kill(int id, DateTime start)
     {
         using var process = Find(id);
+        Trace($"watcher kill {id}: found={process is not null} sid={(OperatingSystem.IsWindows() || process is null ? 0 : getsid(id))}");
         if (process is not null && !IsAgent(process, start))
+        {
+            Trace($"watcher kill {id}: not the agent");
             return;
+        }
 
         // While a process group exists its id is not given to a new process, so with no process of
         // that id left, any group of that id is the agent's: what it started and left behind.
         if (!OperatingSystem.IsWindows())
+        {
             ProcessKill.Group(id);
+            Trace($"watcher kill {id}: group signalled errno={Marshal.GetLastPInvokeError()}");
+        }
 
         // Relay may be killed before the agent has made its group, and Windows has no groups at all.
         if (process is not null)
@@ -262,8 +306,12 @@ internal sealed class AgentWatch(ProcessRequest relay)
         {
             _agents[agent.Id] = start;
             if (TryTell(AgentWatcher.Added(agent.Id, start)))
+            {
+                AgentWatcher.Trace($"relay told watcher {_process?.Id} +{agent.Id}");
                 return;
+            }
             dead = _process;
+            AgentWatcher.Trace($"relay could not tell watcher {dead?.Id} +{agent.Id}");
         }
 
         // It died since it was started: a new one is told every agent, this one included.
@@ -287,7 +335,7 @@ internal sealed class AgentWatch(ProcessRequest relay)
             // If it cannot be told, the watcher has died, and the one that replaces it is told only
             // the agents still running.
             if (_agents.Remove(id))
-                TryTell($"-{id}");
+                AgentWatcher.Trace($"relay -{id} told={TryTell($"-{id}")} watcher {_process?.Id}");
         }
     }
 
@@ -310,6 +358,7 @@ internal sealed class AgentWatch(ProcessRequest relay)
     private async Task ReplaceAsync(Process dead)
     {
         TimeSpan wait;
+        AgentWatcher.Trace($"relay saw watcher {dead.Id} exit (current {_process?.Id})");
         lock (_gate)
         {
             if (_process != dead)
@@ -346,10 +395,12 @@ internal sealed class AgentWatch(ProcessRequest relay)
             if (_process != replacing && _process is { HasExited: false })
             {
                 // Another caller started one meanwhile, and told it every agent.
+                AgentWatcher.Trace($"relay started watcher {started.Id} but keeps {_process.Id}");
                 started.Dispose();
                 return;
             }
 
+            AgentWatcher.Trace($"relay installs watcher {started.Id} replacing {replacing?.Id} (current {_process?.Id}) agents [{string.Join(' ', _agents.Keys)}]");
             _process?.Dispose();
             _process = started;
             _started = Stopwatch.GetTimestamp();

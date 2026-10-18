@@ -37,6 +37,9 @@ internal sealed class RelayHarness : IDisposable
 
     public string PathTo(string fileName) => Path.Combine(Directory, fileName);
 
+    // TEMPORARY DIAGNOSTIC: outside Directory, so a watcher still writing it cannot stop Dispose deleting that.
+    public string WatcherTrace => Path.Combine(Path.GetTempPath(), Path.GetFileName(Directory) + ".watcher.trace");
+
     /// <summary>
     /// Removes all whitespace. Relay wraps output at the console width, so a long line (anything
     /// containing the scratch path) can be split anywhere; compare squashed text to ignore that.
@@ -144,6 +147,8 @@ internal sealed class RelayHarness : IDisposable
             startInfo.ArgumentList.Add(argument);
         startInfo.Environment["PATH"] = Directory + Path.PathSeparator + _toolPath;
         startInfo.Environment["RELAY_TEST_DIR"] = Directory;
+        // TEMPORARY DIAGNOSTIC for the intermittent macOS failure; removed once it is understood.
+        startInfo.Environment["RELAY_WATCHER_TRACE"] = WatcherTrace;
         // Keep the developer's real trusted folders out of the tests, and the tests out of theirs.
         startInfo.Environment["RELAY_HOME"] = PathTo("relay-home");
         // Spectre.Console turns colour escape codes on when it sees GitHub Actions, even with output

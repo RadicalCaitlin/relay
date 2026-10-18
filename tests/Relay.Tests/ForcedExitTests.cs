@@ -341,7 +341,7 @@ public sealed class ForcedExitTests : IDisposable
 
     private static MemoryStream Input(params string[] lines) => new(Encoding.UTF8.GetBytes(string.Join('\n', lines) + "\n"));
 
-    private static async Task AssertStopsAsync(int child)
+    private async Task AssertStopsAsync(int child)
     {
         try
         {
@@ -350,7 +350,8 @@ public sealed class ForcedExitTests : IDisposable
         catch (Xunit.Sdk.XunitException) when (!OperatingSystem.IsWindows())
         {
             // What was left, with its parent and group, says which part of the cleanup failed.
-            Assert.Fail($"The agent's child process {child} is still running.\n{await ProcessListAsync()}");
+            var trace = _harness.WatcherTrace;
+            Assert.Fail($"The agent's child process {child} is still running.\n{await ProcessListAsync()}\n--- watcher trace:\n{(File.Exists(trace) ? Poll.ReadShared(trace) : "(none)")}");
         }
         finally
         {
