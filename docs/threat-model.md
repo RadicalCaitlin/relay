@@ -240,9 +240,11 @@ replies and checks that the result always parses and holds no style Relay did no
 never makes a link: `[text](url)` is shown as written. Rendering is display only; what is
 recorded in the room and sent to other agents is the text exactly as the agent wrote it.
 
-An `@mention` is highlighted only where Relay read it as an address: the leading mentions of
-your own message, and an agent's handover inside an exchange. Highlighting cannot be produced by
-an agent writing a mention anywhere else.
+An `@mention` is highlighted only where Relay acted on it: the leading mentions your message was
+sent to, and an agent's handover to an agent in the room inside an exchange. The router records
+the span when it decides, and the display uses that span rather than reading the text again, so
+highlighting cannot be produced by an agent writing a mention anywhere else, or by characters
+that the display removes but the router did not.
 
 Folder names get a stricter version that also removes line breaks. On Linux and macOS a folder
 name can contain one, and could otherwise add lines that look like Relay's own, such as a fake

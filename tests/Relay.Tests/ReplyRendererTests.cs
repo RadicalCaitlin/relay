@@ -1,5 +1,6 @@
 using Relay.Cli.Ui;
 using Relay.Core.Rooms;
+using Relay.Core.Routing;
 using Spectre.Console;
 using static Relay.Tests.RelayHarness;
 
@@ -12,15 +13,18 @@ namespace Relay.Tests;
 public sealed class ReplyRendererTests : IDisposable
 {
     private readonly RelayHarness _harness = new();
-    private readonly ChatRoom _room = new InMemoryRoomManager().CreateRoom("general");
-
-    public ReplyRendererTests()
-    {
-        _room.AddParticipant(new AgentParticipant("claude", "Claude", new FakeSession("x")));
-        _room.AddParticipant(new AgentParticipant("codex", "Codex", new FakeSession("x")));
-    }
 
     public void Dispose() => _harness.Dispose();
+
+    private static ChatRoom Room(string claudeReply = "x", bool codexAvailable = true)
+    {
+        var room = new InMemoryRoomManager().CreateRoom("general");
+        room.AddParticipant(new AgentParticipant("claude", "Claude", new FakeSession(claudeReply)));
+        room.AddParticipant(codexAvailable
+            ? new AgentParticipant("codex", "Codex", new FakeSession("x"))
+            : new AgentParticipant("codex", "Codex", null, "not installed"));
+        return room;
+    }
 
     [Theory]
     [InlineData("plain text", "plain text")]
@@ -36,6 +40,7 @@ public sealed class ReplyRendererTests : IDisposable
     [InlineData("**bold** and *italic*", "[bold]bold[/] and [italic]italic[/]")]
     [InlineData("**bold *and italic***", "[bold]bold [italic]and italic[/][/]")]
     [InlineData("**bold *and italic* too**", "[bold]bold [italic]and italic[/] too[/]")]
+    [InlineData("***Important***", "[bold][italic]Important[/][/]")]
     [InlineData("*a **b** c*", "[italic]a [bold]b[/] c[/]")]
     [InlineData("(*aside*), **done**.", "([italic]aside[/]), [bold]done[/].")]
     // A marker inside a code span never closes emphasis around it.
@@ -46,6 +51,9 @@ public sealed class ReplyRendererTests : IDisposable
     [InlineData("a*b*c and 2 * 3", "a*b*c and 2 * 3")]
     [InlineData("use `dotnet test` here", "use [teal]dotnet test[/] here")]
     [InlineData("``a `tick` inside``", "[teal]a `tick` inside[/]")]
+    // Only a run of the same length closes a span, so it can hold a longer one.
+    [InlineData("`a``b`", "[teal]a``b[/]")]
+    [InlineData("**`a``b**`**", "[bold][teal]a``b**[/][/]")]
     [InlineData("code `**not bold**`", "code [teal]**not bold**[/]")]
     [InlineData("```inline fence```", "[teal]inline fence[/]")]
     // What is left alone.
@@ -54,6 +62,8 @@ public sealed class ReplyRendererTests : IDisposable
     [InlineData("`unclosed", "`unclosed")]
     [InlineData("snake_case_name and _x_", "snake_case_name and _x_")]
     [InlineData("---", "---")]
+    [InlineData("* * *", "* * *")]
+    [InlineData("- - -", "- - -")]
     [InlineData("[a link](https://example.com)", "[[a link]](https://example.com)")]
     [InlineData("| a | b |", "| a | b |")]
     public void One_line_is_rendered_in_relays_own_styles(string line, string markup)
@@ -95,12 +105,17 @@ public sealed class ReplyRendererTests : IDisposable
         Assert.Equal(Markup.Escape(line), ReplyRenderer.Render(line));
     }
 
+    // Matching a heading with a closing-hash pattern was quadratic in a run of spaces.
+    [Fact]
+    public void A_heading_with_a_long_run_of_spaces_is_rendered_without_stalling()
+        => Assert.StartsWith("[bold underline]a   ", ReplyRenderer.Render("# a" + new string(' ', 100_000) + "b"));
+
     // Whatever an agent writes, the output parses as markup and every tag in it is one of Relay's.
     [Fact]
     public void No_text_can_produce_markup_relay_did_not_add()
     {
         var random = new Random(40);
-        const string alphabet = "[]/*`#->_+.1 \n\taZ@:\\|";
+        const string alphabet = "[]/*`#->_+.1 \n\taZ@:\\|(),\"'";
         string[] hostile = ["[red]x[/]", "[link=https://evil]x[/]", "[/]", "[[", "]]", "[bold", "`[red]`", "**[/]**", "```\n[/]\n```", "# [red]", "> [link]"];
 
         for (var n = 0; n < 3000; n++)
@@ -108,57 +123,67 @@ public sealed class ReplyRendererTests : IDisposable
             var text = n < hostile.Length
                 ? hostile[n]
                 : new string([.. Enumerable.Range(0, random.Next(1, 60)).Select(_ => alphabet[random.Next(alphabet.Length)])]);
-            var output = ReplyRenderer.Render(text, highlighted: 0);
+            var output = ReplyRenderer.Render(text, highlighted: random.Next(text.Split('\n')[0].Length + 1));
 
             _ = new Markup(output);
             Assert.All(Tags(output), tag => Assert.Contains(tag, ReplyRenderer.Styles.Append("dim").Append("/")));
         }
     }
 
-    [Fact]
-    public void An_agents_handover_has_its_mention_highlighted()
+    // What is highlighted is what the router recorded, so these route a message rather than build one.
+    [Theory]
+    [InlineData("@codex\nplease review", "[bold aqua]@codex[/]\nplease review")]
+    // The router matches agent ids without regard to case; the mention is shown as written.
+    [InlineData("@Codex\nplease review", "[bold aqua]@Codex[/]\nplease review")]
+    // Only a mention on the first line is highlighted.
+    [InlineData("\n@codex\nplease review", "\n@codex\nplease review")]
+    // A reply for the user is plain, whatever it begins with or names later.
+    [InlineData("@you\nDone.", "@you\nDone.")]
+    [InlineData("I agree with @codex.", "I agree with @codex.")]
+    public async Task Only_a_handover_to_an_agent_has_its_mention_highlighted(string reply, string markup)
     {
-        var handover = _room.AddMessage("claude", SenderType.Agent, "@codex\nplease review", targetId: "codex");
+        var result = await new MessageRouter().SendHumanMessageAsync(Room(reply), "@claude @codex review this");
 
-        Assert.Equal("[bold aqua]@codex[/]\nplease review", ReplyRenderer.Message(handover, _room, unicode: true));
+        Assert.Equal(markup, ReplyRenderer.Message(result.Exchange[0], unicode: true));
     }
 
-    // The router matches agent ids without regard to case, and so does the highlight.
+    // Outside an exchange a reply is never read for a handover.
     [Fact]
-    public void A_handover_written_in_other_capitals_is_highlighted_as_written()
-        => Assert.Equal(
-            "[bold aqua]@Codex[/]\nplease review",
-            ReplyRenderer.Message(_room.AddMessage("claude", SenderType.Agent, "@Codex\nplease review", targetId: "codex"), _room, unicode: true));
+    public async Task A_reply_outside_an_exchange_is_never_highlighted()
+    {
+        var result = await new MessageRouter().SendHumanMessageAsync(Room("@codex\nplease review"), "@claude review this");
 
-    [Fact]
-    public void A_handover_that_begins_with_a_blank_line_is_shown_without_failing()
-        => Assert.Equal(
-            "\n@codex\nplease review",
-            ReplyRenderer.Message(_room.AddMessage("claude", SenderType.Agent, "\n@codex\nplease review", targetId: "codex"), _room, unicode: true));
+        Assert.Equal("@codex\nplease review", ReplyRenderer.Message(result.Exchange[0], unicode: true));
+    }
 
     [Theory]
-    // Outside an exchange a reply is never read for a handover, so it is recorded as to the user.
-    [InlineData("@codex\nplease review", ChatRoom.HumanId, "@codex\nplease review")]
-    // A mention later in a reply is never an address.
-    [InlineData("I agree with @codex.", "codex", "I agree with @codex.")]
-    public void A_mention_relay_did_not_read_as_an_address_is_plain(string text, string target, string markup)
-        => Assert.Equal(markup, ReplyRenderer.Message(_room.AddMessage("claude", SenderType.Agent, text, target), _room, unicode: true));
+    [InlineData("@claude hello", "[bold aqua]@claude[/] hello")]
+    [InlineData("@claude @codex agree on **this**", "[bold aqua]@claude @codex[/] agree on [bold]this[/]")]
+    [InlineData("@claude, look", "[bold aqua]@claude[/], look")]
+    [InlineData("@claude, @codex review this", "[bold aqua]@claude, @codex[/] review this")]
+    [InlineData("@claude: @codex: both", "[bold aqua]@claude: @codex[/]: both")]
+    [InlineData("@claude @Override is missing", "[bold aqua]@claude[/] @Override is missing")]
+    [InlineData("hello @claude", "hello @claude")]
+    // The router stops at a character that is not a space, though the display removes it.
+    [InlineData("@claude ‮@codex hi", "[bold aqua]@claude[/] @codex hi")]
+    // A message Relay did not send is plain, whatever it begins with.
+    [InlineData("@gemini hello", "@gemini hello")]
+    [InlineData("@claude", "@claude")]
+    public async Task A_human_message_has_highlighted_only_the_mentions_it_was_sent_to(string text, string markup)
+    {
+        var result = await new MessageRouter().SendHumanMessageAsync(Room(), text);
 
-    // The target is what the router records: the first agent named, or nothing for a message to the room.
-    [Theory]
-    [InlineData("@claude hello", "claude", "[bold aqua]@claude[/] hello")]
-    [InlineData("@claude @codex agree on **this**", "claude", "[bold aqua]@claude @codex[/] agree on [bold]this[/]")]
-    [InlineData("@claude, look", "claude", "[bold aqua]@claude[/], look")]
-    [InlineData("@claude, @codex review this", "claude", "[bold aqua]@claude, @codex[/] review this")]
-    [InlineData("@claude: @codex: both", "claude", "[bold aqua]@claude: @codex[/]: both")]
-    // An agent not in the room addressed nobody, and a mention after the first word is text.
-    [InlineData("@gemini hello", "gemini", "@gemini hello")]
-    [InlineData("hello @claude", null, "hello @claude")]
-    [InlineData("@claude @Override is missing", "claude", "[bold aqua]@claude[/] @Override is missing")]
-    // A message the router did not record as addressed is plain, whatever it begins with.
-    [InlineData("@claude hello", null, "@claude hello")]
-    public void A_human_message_has_only_the_mentions_that_addressed_it_highlighted(string text, string? target, string markup)
-        => Assert.Equal(markup, ReplyRenderer.Message(_room.AddMessage(ChatRoom.HumanId, SenderType.Human, text, target), _room, unicode: true));
+        Assert.Equal(markup, ReplyRenderer.Message(result.Message, unicode: true));
+    }
+
+    [Fact]
+    public async Task A_message_to_an_unavailable_agent_is_plain()
+    {
+        var result = await new MessageRouter().SendHumanMessageAsync(Room(codexAvailable: false), "@codex hi");
+
+        Assert.Equal(StopReason.NotSent, result.Reason);
+        Assert.Equal("@codex hi", ReplyRenderer.Message(result.Message, unicode: true));
+    }
 
     [Fact]
     public async Task The_chatroom_shows_replies_rendered_and_markup_in_them_as_text()

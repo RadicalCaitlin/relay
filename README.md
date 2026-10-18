@@ -216,7 +216,7 @@ Agents write Markdown, and Relay shows the common parts of it: headings in bold,
 points, numbered lists, **bold**, *italic*, `code` in its own colour, code blocks behind a `│`
 with every line exactly as written, and quotes dimmed. Tables, links and anything else are shown
 as written. An `@mention` is highlighted only where Relay acted on it: the agents your message
-was addressed to, and an agent's handover to another inside an exchange. `/history` shows
+was sent to, and an agent's handover to another inside an exchange. `/history` shows
 messages the same way.
 
 The styles are Relay's own. Whatever a reply contains, it cannot choose colours, make links, or

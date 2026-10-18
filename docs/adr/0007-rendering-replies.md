@@ -36,16 +36,18 @@ Relay's few styles a span gets, and nothing else.**
 | `- item`, `* item`, `+ item` | `•` and the item, keeping its indent |
 | `1. item` | As written, number kept |
 | `**bold**` | Bold |
+| `***both***` | Bold and italic |
 | `*italic*` | Italic. `_x_` is left alone: it is too common in names such as `snake_case_name` |
 | `` `code` `` | In Relay's code colour, contents shown exactly, nothing inside rendered |
 | ```` ``` ```` fenced block | Each line shown exactly, in the code colour, behind a dim `│`; the language name, if any, dim above it |
 | `> quote` | Dim, behind a dim `│` |
-| Anything else (tables, links, images, HTML, rules) | As written |
+| Anything else (tables, links, images, HTML, rules such as `---` or `* * *`) | As written |
 
 - A marker that is not closed on the same line is shown as written. Emphasis opens only at the
   start of a word and closes only at the end of one, so a glob such as `**/*.cs` or a product
   `a*b*c` is shown as written. A code span is passed over whole, so a marker inside it never
-  closes emphasis around it.
+  closes emphasis around it. As in CommonMark, a span closes only at a run of exactly as many
+  backticks as opened it.
 - A fenced block ends only at a fence at least as long as the one that opened it, so a block can
   show another block.
 - A line longer than 4,000 characters is shown as written: finding closing markers on a line
@@ -74,12 +76,15 @@ very long lines.
 
 ### Highlighting
 
-- **Mentions.** A reply recorded as addressed to an agent in the room (`ChatMessage.TargetId`,
-  which the router sets only for a handover inside an exchange) has its leading `@id` shown in
-  the style Relay uses for agent names. A human message in `/history` that the router recorded as
-  addressed to an agent has highlighted the leading mentions that name agents in the room, read
-  as the router reads them, including after a comma or colon. A mention anywhere else is
-  plain text. Whether a handover was then delivered is said, as now, by the notice that follows it.
+- **Mentions.** The router records on each message how many characters at its start are
+  mentions it acted on (`ChatMessage.AddressLength`), and only those are shown in the style Relay
+  uses for agent names. The renderer never reads the text for mentions itself, so it cannot
+  disagree with the router. For a human message that is the leading mentions it was sent to,
+  including after a comma or colon; a message Relay refused to send (no such agent, an
+  unavailable one, nothing to send) has none. For an agent's reply it is the `@id` of a handover
+  to an agent in the room inside an exchange, when it is on the first line. A mention anywhere
+  else is plain text. Whether a handover was then delivered is said, as now, by the notice that
+  follows it.
 - **Skills and tools.** In an activity line for a step, the tool's name is highlighted. Claude's
   `Skill` tool is shown with the skill it ran (`Skill: code-review`), and `skill` is read like the
   other fields that say what a tool was used on.
@@ -112,5 +117,5 @@ very long lines.
 - A reply that uses `*` or a backtick for something other than Markdown may be shown styled.
   Anything unclosed is shown as written.
 - `ReplyRenderer` is a new place where escaping matters. `ReplyRendererTests` renders thousands of
-  hostile and random texts and asserts that each result parses as markup and holds only
-  `ReplyRenderer.Styles`.
+  hostile and random texts, with and without a highlighted address, and asserts that each result
+  parses as markup and holds only `ReplyRenderer.Styles`.

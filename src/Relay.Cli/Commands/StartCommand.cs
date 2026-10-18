@@ -885,12 +885,12 @@ internal sealed class StartCommand(
         switch (message.SenderType)
         {
             case SenderType.Human when includeHuman:
-                console.MarkupLine($"[bold green]You:[/] {ReplyRenderer.Message(message, room, console.Profile.Capabilities.Unicode)}");
+                console.MarkupLine($"[bold green]You:[/] {ReplyRenderer.Message(message, console.Profile.Capabilities.Unicode)}");
                 break;
             case SenderType.Agent:
                 var name = room.FindParticipant(message.SenderId)?.DisplayName ?? message.SenderId;
                 var to = message.TargetId is { } id && room.FindParticipant(id) is { } addressee ? $" to {addressee.DisplayName}" : string.Empty;
-                console.MarkupLine($"[bold aqua]{Markup.Escape(name + to)}:[/] {ReplyRenderer.Message(message, room, console.Profile.Capabilities.Unicode)}");
+                console.MarkupLine($"[bold aqua]{Markup.Escape(name + to)}:[/] {ReplyRenderer.Message(message, console.Profile.Capabilities.Unicode)}");
                 break;
             // Relay's own words, which may quote an agent's, so shown as written.
             case SenderType.System:

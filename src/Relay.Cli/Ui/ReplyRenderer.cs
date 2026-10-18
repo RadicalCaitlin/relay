@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Relay.Core.Rooms;
-using Relay.Core.Routing;
 using Spectre.Console;
 
 namespace Relay.Cli.Ui;
@@ -24,12 +23,11 @@ internal static partial class ReplyRenderer
     // unclosed markers costs time in proportion to the square of its length. Longer lines are shown as written.
     private const int MaxRenderedLine = 4000;
 
-    /// <summary>The message as Spectre markup, with the leading mentions Relay read as an address highlighted.</summary>
-    public static string Message(ChatMessage message, ChatRoom room, bool unicode)
-    {
-        var text = RelayConsole.Clean(message.Content);
-        return Render(text, AddressLength(text, message, room), unicode);
-    }
+    /// <summary>The message as Spectre markup, with the leading mentions the router acted on highlighted.</summary>
+    // The router counted characters of the text as written; cleaning removes characters one at a
+    // time, so the cleaned address is the start of the cleaned text.
+    public static string Message(ChatMessage message, bool unicode)
+        => Render(message.Content, RelayConsole.Clean(message.Content[..message.AddressLength]).Length, unicode);
 
     /// <param name="highlighted">How many characters at the start are mentions Relay acted on.</param>
     public static string Render(string text, int highlighted = 0, bool unicode = true)
@@ -81,7 +79,10 @@ internal static partial class ReplyRenderer
     private static string? Block(string trimmed, string indent, bool unicode, string bar)
     {
         if (Heading().Match(trimmed) is { Success: true } heading)
-            return $"{indent}[{(heading.Groups[1].Length <= 2 ? "bold underline" : "bold")}]{Inline(heading.Groups[2].Value)}[/]";
+            return $"{indent}[{(heading.Groups[1].Length <= 2 ? "bold underline" : "bold")}]{Inline(HeadingText(heading.Groups[2].Value))}[/]";
+        // A rule such as "* * *" is shown as written, not as a bullet.
+        if (Rule().IsMatch(trimmed))
+            return $"{indent}{Markup.Escape(trimmed)}";
         if (Bullet().Match(trimmed) is { Success: true } bullet)
             return $"{indent}{(unicode ? "•" : "-")} {Inline(bullet.Groups[1].Value)}";
         if (Numbered().Match(trimmed) is { Success: true } numbered)
@@ -89,6 +90,17 @@ internal static partial class ReplyRenderer
         if (Quote().Match(trimmed) is { Success: true } quote)
             return $"{indent}[dim]{bar} {Inline(quote.Groups[1].Value)}[/]";
         return null;
+    }
+
+    // Closing hashes count only after a space, so "Using C#" keeps its own. They are found here
+    // rather than in the pattern, where a long run of spaces made matching quadratic.
+    private static string HeadingText(string text)
+    {
+        var title = text.TrimEnd();
+        var withoutHashes = title.TrimEnd('#');
+        return withoutHashes.Length < title.Length && withoutHashes.TrimEnd() is { Length: > 0 } kept && kept.Length < withoutHashes.Length
+            ? kept
+            : title;
     }
 
     private static string Inline(string text)
@@ -109,12 +121,8 @@ internal static partial class ReplyRenderer
         {
             if (text[i] == '`')
             {
-                var run = 1;
-                while (i + run < text.Length && text[i + run] == '`')
-                    run++;
-                var fence = new string('`', run);
-                var close = text.IndexOf(fence, i + run, StringComparison.Ordinal);
-                if (close > i + run)
+                var run = CodeSpan(text, i, out var close);
+                if (close >= 0)
                 {
                     Flush();
                     output.Append($"[{CodeStyle}]{Markup.Escape(text[(i + run)..close])}[/]");
@@ -122,19 +130,25 @@ internal static partial class ReplyRenderer
                     continue;
                 }
 
-                plain.Append(fence);
+                plain.Append('`', run);
                 i += run;
                 continue;
             }
 
             if (text[i] == '*')
             {
-                var marker = i + 1 < text.Length && text[i + 1] == '*' ? "**" : "*";
+                var marker = text.AsSpan(i).StartsWith("***") ? "***" : text.AsSpan(i).StartsWith("**") ? "**" : "*";
                 var start = i + marker.Length;
                 if (CanOpen(text, i, marker.Length) && FindClose(text, start, marker) is var close and >= 0)
                 {
                     Flush();
-                    output.Append($"[{(marker == "**" ? "bold" : "italic")}]{Inline(text[start..close])}[/]");
+                    var inner = Inline(text[start..close]);
+                    output.Append(marker switch
+                    {
+                        "***" => $"[bold][italic]{inner}[/][/]",
+                        "**" => $"[bold]{inner}[/]",
+                        _ => $"[italic]{inner}[/]",
+                    });
                     i = close + marker.Length;
                     continue;
                 }
@@ -168,18 +182,15 @@ internal static partial class ReplyRenderer
         {
             if (text[j] == '`')
             {
-                var run = 1;
-                while (j + run < text.Length && text[j + run] == '`')
-                    run++;
-                var end = text.IndexOf(new string('`', run), j + run, StringComparison.Ordinal);
-                j = end > j + run ? end + run : j + run;
+                var run = CodeSpan(text, j, out var end);
+                j = end >= 0 ? end + run : j + run;
                 continue;
             }
 
             var after = j + marker.Length;
             if (j > from && text.AsSpan(j).StartsWith(marker) && !char.IsWhiteSpace(text[j - 1])
                 && (after == text.Length || char.IsWhiteSpace(text[after]) || ".,;:!?)]}\"'".Contains(text[after]))
-                && (marker.Length == 2 || text[j - 1] != '*'))
+                && (marker.Length > 1 || text[j - 1] != '*'))
                 return j;
 
             j++;
@@ -188,37 +199,41 @@ internal static partial class ReplyRenderer
         return -1;
     }
 
-    // The mentions at the start that Relay acted on, as the router recorded them: an agent's
-    // handover to the agent it was addressed to, or the leading mentions of a human message that
-    // was addressed to an agent in the room. Anything else, here or later in the text, is shown as written.
-    private static int AddressLength(string text, ChatMessage message, ChatRoom room)
+    // The run of backticks at `at`, and where the run that closes it begins, or -1. As in
+    // CommonMark, only a run of exactly the same length closes it, so a span can hold a shorter or
+    // longer one. Inline and FindClose both use this, so emphasis and code always agree on where a
+    // span ends.
+    private static int CodeSpan(string text, int at, out int close)
     {
-        var firstLine = text.Split('\n', 2)[0];
-        switch (message.SenderType)
+        var run = Run(text, at);
+        for (var j = at + run; j < text.Length;)
         {
-            // Agent ids are matched without regard to case, as the router matches them.
-            case SenderType.Agent when message.TargetId is { } target && Mention.TryParseHandover(text, out var named, out _)
-                && named.Equals(target, StringComparison.OrdinalIgnoreCase):
-                // A handover may begin with blank lines; only a mention on the first line is highlighted.
-                var at = firstLine.IndexOf('@');
-                return at >= 0 && firstLine.AsSpan(at + 1).StartsWith(named) ? at + 1 + named.Length : 0;
-            case SenderType.Human when message.TargetId is { } addressed && room.FindParticipant(addressed) is not null:
-                var end = 0;
-                var offset = 0;
-                var rest = firstLine;
-                while (Mention.TryParse(rest, out var next, out var body) && room.FindParticipant(next) is not null)
-                {
-                    end = offset + rest.IndexOf('@') + 1 + next.Length;
-                    // What follows the mention and its separator (a space, or a comma or colon), as the router reads it.
-                    var bodyStart = body.Length == 0 ? rest.Length : rest.TrimEnd().Length - body.Length;
-                    offset += bodyStart;
-                    rest = rest[bodyStart..];
-                }
+            if (text[j] != '`')
+            {
+                j++;
+                continue;
+            }
 
-                return end;
-            default:
-                return 0;
+            var length = Run(text, j);
+            if (length == run)
+            {
+                close = j;
+                return run;
+            }
+
+            j += length;
         }
+
+        close = -1;
+        return run;
+    }
+
+    private static int Run(string text, int at)
+    {
+        var end = at;
+        while (end < text.Length && text[end] == '`')
+            end++;
+        return end - at;
     }
 
     [GeneratedRegex(@"^(`{3,})(.*)$")]
@@ -227,9 +242,11 @@ internal static partial class ReplyRenderer
     [GeneratedRegex(@"^(`{3,})[ \t]*$")]
     private static partial Regex FenceClose();
 
-    // Closing hashes count only after a space, so "Using C#" keeps its own.
-    [GeneratedRegex(@"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")]
+    [GeneratedRegex(@"^(#{1,6})[ \t]+(.+)$")]
     private static partial Regex Heading();
+
+    [GeneratedRegex(@"^([-*_])[ \t]*(?:\1[ \t]*){2,}$")]
+    private static partial Regex Rule();
 
     [GeneratedRegex(@"^[-*+][ \t]+(.*)$")]
     private static partial Regex Bullet();
