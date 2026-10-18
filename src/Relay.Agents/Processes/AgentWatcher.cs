@@ -203,8 +203,11 @@ public static class AgentWatcher
 }
 
 /// <summary>
-/// Relay's end of the <see cref="AgentWatcher"/>: started with the first agent, and told about each
-/// one. If the watcher dies, another is started at once and told every agent still running.
+/// Relay's end of the <see cref="AgentWatcher"/>: started before the first agent, and told about
+/// each one. If the watcher dies, another is started at once and told every agent still running.
+/// A watcher is always started outside the lock: starting a process takes a lock of the runtime's
+/// own, and holding this one across it risks a deadlock with anything the runtime calls back into
+/// here, such as an agent's exit being reported.
 /// </summary>
 /// <param name="relay">How to start this same Relay; the watcher's command is added to its arguments.</param>
 internal sealed class AgentWatch(ProcessRequest relay)
@@ -228,14 +231,15 @@ internal sealed class AgentWatch(ProcessRequest relay)
     /// <exception cref="IOException">The watcher could not be started, so no agent would be covered.</exception>
     public void EnsureRunning()
     {
+        Process? current;
         lock (_gate)
         {
-            if (_process is { HasExited: false })
+            current = _process;
+            if (current is { HasExited: false })
                 return;
-
-            Discard();
-            StartAndTellAll();
         }
+
+        Launch(current);
     }
 
     /// <exception cref="IOException">The watcher could not be started or told, so the agent is not covered.</exception>
@@ -253,18 +257,25 @@ internal sealed class AgentWatch(ProcessRequest relay)
             throw new IOException(ex.Message, ex);
         }
 
+        Process? dead;
         lock (_gate)
         {
             _agents[agent.Id] = start;
-            try
-            {
-                Tell(AgentWatcher.Added(agent.Id, start));
-            }
-            catch (IOException)
-            {
+            if (TryTell(AgentWatcher.Added(agent.Id, start)))
+                return;
+            dead = _process;
+        }
+
+        // It died since it was started: a new one is told every agent, this one included.
+        try
+        {
+            Launch(dead);
+        }
+        catch (IOException)
+        {
+            lock (_gate)
                 _agents.Remove(agent.Id);
-                throw;
-            }
+            throw;
         }
     }
 
@@ -273,37 +284,27 @@ internal sealed class AgentWatch(ProcessRequest relay)
     {
         lock (_gate)
         {
-            if (!_agents.Remove(id))
-                return;
-
-            try
-            {
-                Tell($"-{id}");
-            }
-            catch (IOException)
-            {
-                // No watcher could be started for the agents still running. The next one tries again.
-            }
+            // If it cannot be told, the watcher has died, and the one that replaces it is told only
+            // the agents still running.
+            if (_agents.Remove(id))
+                TryTell($"-{id}");
         }
     }
 
-    private void Tell(string line)
+    private bool TryTell(string line)
     {
-        if (_process is not null)
-        {
-            try
-            {
-                _process.StandardInput.WriteLine(line);
-                return;
-            }
-            catch (IOException)
-            {
-                Discard();
-            }
-        }
+        if (_process is null)
+            return false;
 
-        if (_agents.Count > 0)
-            StartAndTellAll();
+        try
+        {
+            _process.StandardInput.WriteLine(line);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     private async Task ReplaceAsync(Process dead)
@@ -313,8 +314,6 @@ internal sealed class AgentWatch(ProcessRequest relay)
         {
             if (_process != dead)
                 return;
-
-            Discard();
             wait = SteadyRun - Stopwatch.GetElapsedTime(_started);
         }
 
@@ -323,43 +322,52 @@ internal sealed class AgentWatch(ProcessRequest relay)
 
         lock (_gate)
         {
-            // An agent that started or finished meanwhile may have started one already.
-            if (_process is not null || _agents.Count == 0)
+            // Left for the next agent to start, if none is running; already replaced, if one started or finished meanwhile.
+            if (_process != dead || _agents.Count == 0)
                 return;
+        }
 
+        try
+        {
+            Launch(dead);
+        }
+        catch (IOException)
+        {
+            // The next agent to start or finish tries again.
+        }
+    }
+
+    /// <summary>Starts a watcher in place of <paramref name="replacing"/>, and tells it every agent running.</summary>
+    private void Launch(Process? replacing)
+    {
+        var started = Start();
+        lock (_gate)
+        {
+            if (_process != replacing && _process is { HasExited: false })
+            {
+                // Another caller started one meanwhile, and told it every agent.
+                started.Dispose();
+                return;
+            }
+
+            _process?.Dispose();
+            _process = started;
+            _started = Stopwatch.GetTimestamp();
             try
             {
-                StartAndTellAll();
+                foreach (var (id, start) in _agents)
+                    started.StandardInput.WriteLine(AgentWatcher.Added(id, start));
             }
             catch (IOException)
             {
-                // The next agent to start or finish tries again.
+                started.Dispose();
+                _process = null;
+                throw;
             }
         }
     }
 
-    /// <summary>For the first agent, or once the watcher has died: either way it must hear of every agent running.</summary>
-    private void StartAndTellAll()
-    {
-        try
-        {
-            _process = Start();
-            foreach (var (id, start) in _agents)
-                _process.StandardInput.WriteLine(AgentWatcher.Added(id, start));
-        }
-        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidOperationException)
-        {
-            Discard();
-            throw ex as IOException ?? new IOException(ex.Message, ex);
-        }
-    }
-
-    private void Discard()
-    {
-        _process?.Dispose();
-        _process = null;
-    }
-
+    /// <exception cref="IOException">The watcher could not be started.</exception>
     private Process Start()
     {
         var startInfo = new ProcessStartInfo(relay.FileName)
@@ -377,8 +385,16 @@ internal sealed class AgentWatch(ProcessRequest relay)
         startInfo.ArgumentList.Add(AgentWatcher.Command);
         startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
 
-        var process = Process.Start(startInfo)!;
-        _started = Stopwatch.GetTimestamp();
+        Process process;
+        try
+        {
+            process = Process.Start(startInfo)!;
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            throw new IOException(ex.Message, ex);
+        }
+
         process.StandardInput.AutoFlush = true;
         process.Exited += (_, _) => _ = ReplaceAsync(process);
         process.EnableRaisingEvents = true;
