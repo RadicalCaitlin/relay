@@ -1,3 +1,4 @@
+using Relay.Core.Routing;
 using static Relay.Tests.RelayHarness;
 
 namespace Relay.Tests;
@@ -232,6 +233,53 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("Stopped after 6 agent turns, the limit for one exchange. Codex's last message was addressed to Claude and was not delivered.", output);
         Assert.Equal(3, _harness.Invocations("claude").Count);
         Assert.Equal(3, _harness.Invocations("codex").Count);
+    }
+
+    [Fact]
+    public async Task Turn_limit_the_user_chose_is_shown_stops_the_exchange_and_says_how_to_allow_more()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nand you?"));
+        _harness.InstallAgent("codex", CodexReply(@"@claude\nand you?"));
+
+        var output = await _harness.ChatAsync(["start", "--max-turns", "3"], "@claude @codex discuss", "/help", "/exit");
+
+        AssertShown("An exchange between agents is at most 3 agent turns, as you asked at start-up.", output);
+        AssertShown("Waiting for Codex... (turn 2 of 3, Ctrl+C to stop the exchange)", output);
+        AssertShown("Stopped after 3 agent turns, the limit for one exchange. Claude's last message was addressed to Codex and was not delivered.", output);
+        AssertShown("An exchange is at most 3 agent turns. Relay allows up to 20: start it again with --max-turns <N> to change that.", output);
+        AssertShown("An exchange between agents is at most 3 agent turns for this session. Only --max-turns at start-up changes it, from 1 to 20.", output);
+        Assert.Equal(2, _harness.Invocations("claude").Count);
+        Assert.Single(_harness.Invocations("codex"));
+    }
+
+    // Every line that counts turns says "1 agent turn", not "1 agent turns".
+    [Fact]
+    public async Task Turn_limit_of_one_delivers_no_handover_and_every_line_counts_one_turn()
+    {
+        _harness.InstallAgent("claude", ClaudeReply(@"@codex\nand you?"));
+        _harness.InstallAgent("codex", CodexReply("never asked"));
+
+        var output = await _harness.ChatAsync(["start", "--max-turns", "1"], "@claude @codex discuss", "/help", "/exit");
+
+        AssertShown("An exchange between agents is at most 1 agent turn, as you asked at start-up.", output);
+        AssertShown("Waiting for Claude... (turn 1 of 1, Ctrl+C to stop the exchange)", output);
+        AssertShown("Stopped after 1 agent turn, the limit for one exchange. Claude's last message was addressed to Codex and was not delivered.", output);
+        AssertShown("An exchange is at most 1 agent turn. Relay allows up to 20: start it again with --max-turns <N> to change that.", output);
+        AssertShown("An exchange between agents is at most 1 agent turn for this session. Only --max-turns at start-up changes it, from 1 to 20.", output);
+        AssertNotShown("1 agent turns", output);
+        Assert.Single(_harness.Invocations("claude"));
+        Assert.Empty(_harness.Invocations("codex"));
+    }
+
+    // The option's own description cannot be built from the constants, so it is checked against them.
+    [Fact]
+    public async Task Help_for_start_states_the_turn_limits_relay_was_built_with()
+    {
+        var (exitCode, output) = await _harness.RunAsync(["start", "--help"]);
+
+        Assert.Equal(0, exitCode);
+        AssertShown($"from 1 to {ExchangeLimits.MaxAllowedTurns}", output);
+        AssertShown($"Defaults to {ExchangeLimits.DefaultTurns}", output);
     }
 
     [Fact]
@@ -495,6 +543,8 @@ public sealed class CliSmokeTests : IDisposable
 
         AssertShown("/reset", output);
         AssertShown("@claude <message>", output);
+        AssertShown("An exchange between agents is at most 6 agent turns for this session (the default). Only --max-turns at start-up changes it, from 1 to 20.", output);
+        AssertNotShown("as you asked at start-up", output);
         AssertShown("9.9.9 (fake claude)", output);
         // Once when the room opens and once more when /clear redraws it.
         Assert.Equal(2, output.Split("# general").Length - 1);
@@ -704,6 +754,27 @@ public sealed class CliSmokeTests : IDisposable
         Assert.NotEqual(0, exitCode);
         AssertShown("--turn-timeout must be a whole number of seconds, minutes or hours", output);
         AssertNotShown("# general", output);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("21")]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("6 turns")]
+    [InlineData("six")]
+    [InlineData("+6")]
+    [InlineData("99999999999")]
+    public async Task Start_refuses_a_turn_limit_it_cannot_read(string value)
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var (exitCode, output) = await _harness.RunAsync(["start", "--max-turns", value], "@claude hi", "/exit");
+
+        Assert.NotEqual(0, exitCode);
+        AssertShown("--max-turns must be a whole number from 1 to 20, such as --max-turns 10.", output);
+        AssertNotShown("# general", output);
+        Assert.Empty(_harness.Invocations("claude"));
     }
 
     [Fact]

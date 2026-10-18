@@ -31,11 +31,15 @@ public class ExchangeTests
         return last.Content;
     }
 
-    private async Task<(RoutingResult Result, int TurnLimit)> SendAsync(string text)
+    private async Task<(RoutingResult Result, int TurnLimit, bool InExchange)> SendAsync(string text)
     {
         var limit = 0;
-        var result = await _router.SendHumanMessageAsync(_room, text, new() { TurnStarting = starting => limit = starting.TurnLimit });
-        return (result, limit);
+        var inExchange = false;
+        var result = await _router.SendHumanMessageAsync(_room, text, new()
+        {
+            TurnStarting = starting => (limit, inExchange) = (starting.TurnLimit, starting.InExchange),
+        });
+        return (result, limit, inExchange);
     }
 
     [Theory]
@@ -68,9 +72,10 @@ public class ExchangeTests
         var claude = AddAgent("Claude", "hi");
         AddAgent("Codex", "hi");
 
-        var (_, turnLimit) = await SendAsync(text);
+        var (_, turnLimit, inExchange) = await SendAsync(text);
 
         Assert.Equal(6, turnLimit);
+        Assert.True(inExchange);
         Assert.EndsWith($"\n\n{body}", Assert.Single(claude.Received));
     }
 
@@ -85,9 +90,10 @@ public class ExchangeTests
         var claude = AddAgent("Claude", "hi");
         var codex = AddAgent("Codex", "hi");
 
-        var (result, turnLimit) = await SendAsync(text);
+        var (result, turnLimit, inExchange) = await SendAsync(text);
 
         Assert.Equal(1, turnLimit);
+        Assert.False(inExchange);
         Assert.Equal([body], claude.Received);
         Assert.Empty(codex.Received);
         Assert.Equal(StopReason.RepliedToUser, result.Reason);
@@ -243,6 +249,58 @@ public class ExchangeTests
     [Fact]
     public void Turn_limit_must_allow_at_least_one_turn()
         => Assert.Throws<ArgumentOutOfRangeException>(() => new ExchangeLimits(MaxTurns: 0));
+
+    // The bound belongs to the router, not only to the command line: no later caller can ask for
+    // an exchange longer than the one the threat model and ADR 0002 are written for.
+    [Fact]
+    public void Turn_limit_must_not_pass_the_largest_one_allowed()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => new ExchangeLimits(ExchangeLimits.MaxAllowedTurns + 1));
+
+    [Fact]
+    public void Turn_limit_is_six_unless_one_is_chosen()
+    {
+        Assert.Equal(6, ExchangeLimits.DefaultTurns);
+        Assert.Equal(20, ExchangeLimits.MaxAllowedTurns);
+        Assert.Equal(ExchangeLimits.DefaultTurns, new ExchangeLimits().MaxTurns);
+        Assert.Equal(ExchangeLimits.MaxAllowedTurns, new ExchangeLimits(ExchangeLimits.MaxAllowedTurns).MaxTurns);
+    }
+
+    // Run here rather than through the CLI: the longest exchange Relay allows is 20 agent processes.
+    [Fact]
+    public async Task Exchange_may_run_the_largest_limit_relay_allows()
+    {
+        var router = new MessageRouter(limits: new ExchangeLimits(ExchangeLimits.MaxAllowedTurns));
+        var claude = AddAgent("Claude", "@codex\nand you?");
+        var codex = AddAgent("Codex", "@claude\nand you?");
+
+        var result = await router.SendHumanMessageAsync(_room, "@claude @codex discuss");
+
+        Assert.Equal(ExchangeLimits.MaxAllowedTurns, claude.Received.Count + codex.Received.Count);
+        Assert.Equal(StopReason.TurnLimit, result.Reason);
+        Assert.StartsWith($"Stopped after {ExchangeLimits.MaxAllowedTurns} agent turns, the limit for one exchange.", Notice(result));
+    }
+
+    [Fact]
+    public async Task One_turn_exchange_delivers_no_handover_and_the_notice_counts_one_turn()
+    {
+        var router = new MessageRouter(limits: new ExchangeLimits(MaxTurns: 1));
+        var claude = AddAgent("Claude", "@codex\nover to you");
+        var codex = AddAgent("Codex", "never asked");
+        var turns = new List<string>();
+
+        var result = await router.SendHumanMessageAsync(
+            _room,
+            "@claude @codex discuss",
+            new() { TurnStarting = starting => turns.Add($"{starting.Agent.Id} {starting.Turn}/{starting.TurnLimit} {starting.InExchange}") });
+
+        Assert.Equal(["claude 1/1 True"], turns);
+        Assert.Single(claude.Received);
+        Assert.Empty(codex.Received);
+        Assert.Equal(StopReason.TurnLimit, result.Reason);
+        Assert.Equal(
+            "Stopped after 1 agent turn, the limit for one exchange. Claude's last message was addressed to Codex and was not delivered. To carry on: @codex @claude continue",
+            Notice(result));
+    }
 
     [Fact]
     public async Task Naming_an_agent_that_is_unavailable_sends_nothing_to_anyone()

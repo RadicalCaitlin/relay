@@ -9,7 +9,6 @@ using Relay.Cli.Infrastructure;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
-using Relay.Core.Routing;
 using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -35,7 +34,6 @@ var services = new ServiceCollection()
     .AddRelayAgents(new ProcessRequest(relay, relayArguments))
     .AddSingleton<AgentDiscoveryService>()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
-    .AddSingleton<MessageRouter>()
     .AddSingleton(new WorkspaceTrustStore(WorkspaceTrustStore.DefaultFilePath()))
     .AddSingleton<IConsoleStreams, ConsoleStreams>()
     .AddSingleton<WorkspaceTrustPrompt>()

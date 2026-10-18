@@ -59,6 +59,7 @@ dotnet run --project src/Relay.Cli -- <command>
 | `relay start --workspace <path>` | Start a chatroom whose agents work in that folder instead of the current one |
 | `relay start --agents claude,codex` | Start a chatroom with only the agents named; each must be installed |
 | `relay start --turn-timeout 30m` | Start a chatroom in which an agent whose turn runs longer than 30 minutes is stopped (`90s`, `30m`, `2h`; at most `24h`) |
+| `relay start --max-turns 10` | Start a chatroom in which one exchange between agents may run 10 agent turns (1 to 20; 6 without it) |
 | `relay trust`     | Trust the current folder and remember it (`--remove` to undo, `--list` to show all) |
 | `relay --version` | Print the Relay version                                  |
 | `relay --help`    | Show help                                                |
@@ -142,12 +143,15 @@ Codex: None. A channel it is.
   answer.
 - Any other reply comes back to you and ends the exchange, including one that merely begins by
   mentioning an agent (`@claude and I agree...`).
-- An exchange is at most 6 agent turns. Relay says why it stopped whenever the reason is anything
-  other than a reply to you.
+- An exchange is at most 6 agent turns, or the number you chose with `relay start --max-turns <N>`
+  (1 to 20). Relay says why it stopped whenever the reason is anything other than a reply to you,
+  and `/help` states the limit for the session.
 - Only the mentions your message begins with count, and only while they name agents in the room.
   `@claude ask @codex to review` and `@claude @Override is missing` both go to Claude alone, as
   typed. Outside an exchange nothing an agent writes is delivered to another agent.
-- Agents cannot invite other agents, raise the limit, or start an exchange of their own.
+- Agents cannot invite other agents, raise the limit, or start an exchange of their own. The limit
+  is settled by your `relay start` and holds for the whole session: no command changes it, and
+  nothing an agent writes or anything in the working folder can raise it.
 - `Ctrl+C` stops the whole exchange.
 - After `/pause on`, Relay shows each message one agent addresses to another and waits: `/go`
   passes it on, `/stop` ends the exchange, and anything else you type goes back to its author as
@@ -325,7 +329,9 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
   question counts towards the limit.
 - You cannot type while an agent is working, so an exchange can only be interrupted with `Ctrl+C`
   or, in pause mode, between turns.
-- One agent speaks at a time, and an exchange between agents is limited to 6 turns.
+- One agent speaks at a time, and an exchange between agents is limited to 6 turns, or to the
+  `--max-turns` you chose at start-up, up to 20. The limit cannot be changed without restarting
+  Relay, and a higher one means a longer run with nobody watching when pause mode is off.
 - Not yet packaged; run it with `dotnet run`.
 
 ## Near-term roadmap

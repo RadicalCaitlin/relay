@@ -75,8 +75,10 @@ this are in `docs/adr/0001-shared-room-context.md`; read it before changing what
 
 Exchanges: a message that begins with several mentions opens an exchange between those agents.
 Inside it the router delivers a reply whose first line is a mention of an invited agent, for at most
-`ExchangeLimits.MaxTurns` turns, and returns a `StopReason`. `StartCommand` shows each message as
-the router records it and, in pause mode, answers the router's question about each handover.
+`ExchangeLimits.MaxTurns` turns, and returns a `StopReason`. `StartCommand` builds the router once,
+with `ExchangeLimits.DefaultTurns` or the `--max-turns` the user gave, so the limit cannot change
+while Relay runs. `StartCommand` shows each message as the router records it and, in pause mode,
+answers the router's question about each handover.
 Read `docs/adr/0002-agent-to-agent-exchanges.md` before changing who can start a turn.
 
 Roles: `/role` gives an agent an `AgentRole` for the session. `SharedContext` states it in Relay's
@@ -253,6 +255,10 @@ and update it in the same change.
   writes starts a turn, invites an agent, or is read as a `/command`.
 - Every exchange is bounded by `ExchangeLimits.MaxTurns`, one agent runs at a time, and a reply
   addresses at most one agent. Do not add a path that starts a turn without counting it.
+- The limit is the user's alone: `relay start --max-turns`, checked before the room opens and at
+  most `ExchangeLimits.MaxAllowedTurns`. Do not add a command, a setting file, an environment
+  variable or anything read from the workspace that raises it, and do not make it settable after
+  the router is built.
 - A handed-over message is sent with `SharedContext.ComposeHandover`: inside the transcript, under
   its author's name. Only Relay's own words follow the transcript on such a turn.
 - The user never edits an agent's message. At a pause they deliver it, stop, or write to its author.
