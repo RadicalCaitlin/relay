@@ -265,6 +265,21 @@ public class ExchangeTests
         Assert.Equal(ExchangeLimits.MaxAllowedTurns, new ExchangeLimits(ExchangeLimits.MaxAllowedTurns).MaxTurns);
     }
 
+    // Run here rather than through the CLI: the longest exchange Relay allows is 20 agent processes.
+    [Fact]
+    public async Task Exchange_may_run_the_largest_limit_relay_allows()
+    {
+        var router = new MessageRouter(limits: new ExchangeLimits(ExchangeLimits.MaxAllowedTurns));
+        var claude = AddAgent("Claude", "@codex\nand you?");
+        var codex = AddAgent("Codex", "@claude\nand you?");
+
+        var result = await router.SendHumanMessageAsync(_room, "@claude @codex discuss");
+
+        Assert.Equal(ExchangeLimits.MaxAllowedTurns, claude.Received.Count + codex.Received.Count);
+        Assert.Equal(StopReason.TurnLimit, result.Reason);
+        Assert.StartsWith($"Stopped after {ExchangeLimits.MaxAllowedTurns} agent turns, the limit for one exchange.", Notice(result));
+    }
+
     [Fact]
     public async Task One_turn_exchange_delivers_no_handover_and_the_notice_counts_one_turn()
     {

@@ -247,5 +247,5 @@ where N is a whole number from 1 to **20**. Everything else in this record holds
   exchange stops with the usual notice. The waiting line still shows `turn 1 of 1`, so the user can
   see why.
 - What the user is told: `/help` states the session's limit, the header states it when it was
-  chosen, and the notice at the limit says how to allow more, except at 20 where it says that is
-  the most Relay allows.
+  chosen, and the notice at the limit names the limit, the bound and the option that changes it.
+  One sentence serves every limit, so nothing offers more than Relay allows.

@@ -9,7 +9,6 @@ using Relay.Cli.Infrastructure;
 using Relay.Cli.Ui;
 using Relay.Core.Agents;
 using Relay.Core.Rooms;
-using Relay.Core.Routing;
 using Relay.Core.Workspaces;
 using Spectre.Console;
 using Spectre.Console.Cli;

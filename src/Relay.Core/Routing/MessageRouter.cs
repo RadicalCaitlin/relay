@@ -69,7 +69,10 @@ public abstract record HandoverDecision
     public sealed record SendBack(string Text) : HandoverDecision;
 }
 
-/// <param name="TurnLimit">How many turns the exchange can have; 1 when the user named a single agent.</param>
+/// <param name="TurnLimit">
+/// How many turns this exchange can have. It is 1 for a message that named a single agent, and may
+/// also be 1 in an exchange, so it never says which this is: read <paramref name="InExchange"/>.
+/// </param>
 /// <param name="InExchange">Whether the user named several agents, so a reply may start another turn.</param>
 public sealed record TurnStarting(AgentParticipant Agent, int Turn, int TurnLimit, bool InExchange);
 
