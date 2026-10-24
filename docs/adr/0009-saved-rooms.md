@@ -93,8 +93,10 @@ conversation where its CLI still has it. `relay rooms` lists saved rooms, and
 
 ## Verified, and not
 
-- **Verified on Windows:** everything the tests cover, including the access list on the folder and
-  its files.
-- **Not verified:** that a real Claude Code or Codex continues a conversation from an earlier run of
-  Relay; the tests use fake CLIs. The arguments are the ones each turn already uses. macOS and Linux
-  permissions are covered by the same test, which CI runs there.
+- **Verified on Windows, macOS and Linux (CI):** everything the tests cover, including the access
+  list on Windows and the `0700`/`0600` modes elsewhere.
+- **Verified by hand with Claude Code 2.1.273 and codex-cli 0.162.1 on Windows:** after Relay was
+  closed and the room reopened, both agents recalled a word from the earlier run from their own
+  conversation, without the room's old messages being sent again; a second Relay could neither open
+  nor delete the open room; a damaged file was set aside; and deletion removed the room and the copy.
+- **Not verified:** continuing a real conversation on macOS and Linux.
