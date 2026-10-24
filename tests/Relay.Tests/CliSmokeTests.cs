@@ -52,6 +52,74 @@ public sealed class CliSmokeTests : IDisposable
         AssertShown("agents", output);
         AssertShown("start", output);
         AssertShown("trust", output);
+        AssertShown("rooms", output);
+    }
+
+    [Fact]
+    public async Task A_room_named_with_room_is_reopened_where_it_was_left()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+
+        var first = await _harness.ChatAsync(["start", "--room", "work"], "@claude hi");
+        var second = await _harness.ChatAsync(["start", "--room", "work"], "/history", "@claude again");
+
+        AssertShown("# work", first);
+        AssertShown("This room is saved for this folder, where only you can read it", first);
+        AssertShown("relay rooms --delete work deletes it", first);
+        AssertShown("Reopened with 2 messages from before.", second);
+        AssertShown("Claude continues its conversation.", second);
+        AssertShown("You: @claude hi", second);
+        AssertShown("Claude: pong", second);
+        // The new turn continues the conversation of the first run, and is not shown the old messages again.
+        Assert.EndsWith($"--resume {ClaudeSessionId}", _harness.Invocations("claude")[^1]);
+        Assert.DoesNotContain("@claude hi", _harness.StandardInput("claude"));
+    }
+
+    [Fact]
+    public async Task Without_room_nothing_is_saved()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+
+        var output = await _harness.ChatAsync(["start"], "@claude hi");
+
+        AssertShown("# general", output);
+        AssertNotShown("saved", output);
+        Assert.False(Directory.Exists(_harness.PathTo(Path.Combine("relay-home", "rooms"))));
+    }
+
+    [Theory]
+    [InlineData("../elsewhere")]
+    [InlineData("work.json")]
+    public async Task A_room_name_that_is_not_a_plain_name_is_refused_before_the_room_opens(string name)
+    {
+        _harness.InstallAgent("claude", ClaudeReply("unused"));
+
+        var (exitCode, output) = await _harness.RunAsync(["start", "--room", name], "/exit");
+
+        Assert.NotEqual(0, exitCode);
+        AssertShown("--room must be a name of letters, digits, - and _", output);
+        AssertNotShown("Claude connected", output);
+        Assert.False(Directory.Exists(_harness.PathTo(Path.Combine("relay-home", "rooms"))));
+    }
+
+    [Fact]
+    public async Task Rooms_lists_saved_rooms_and_deletes_one()
+    {
+        _harness.InstallAgent("claude", ClaudeReply("pong"));
+        await _harness.ChatAsync(["start", "--room", "work"], "@claude hi");
+
+        var listed = await _harness.ChatAsync(["rooms"]);
+        var deleted = await _harness.ChatAsync(["rooms", "--delete", "work"]);
+        var again = await _harness.ChatAsync(["rooms", "--delete", "work"]);
+        var empty = await _harness.ChatAsync(["rooms"]);
+        var reopened = await _harness.ChatAsync(["start", "--room", "work"], "/exit");
+
+        AssertShown("work", listed);
+        AssertShown("Last saved", listed);
+        AssertShown("Deleted room work", deleted);
+        AssertShown("No room named work is saved", again);
+        AssertShown("No saved rooms.", empty);
+        AssertNotShown("Reopened", reopened);
     }
 
     [Fact]

@@ -60,7 +60,9 @@ dotnet run --project src/Relay.Cli -- <command>
 | `relay start --agents claude,codex` | Start a chatroom with only the agents named; each must be installed |
 | `relay start --turn-timeout 30m` | Start a chatroom in which an agent whose turn runs longer than 30 minutes is stopped (`90s`, `30m`, `2h`; at most `24h`) |
 | `relay start --max-turns 10` | Start a chatroom in which one exchange between agents may run 10 agent turns (1 to 20; 6 without it) |
+| `relay start --room <name>` | Start a chatroom that is saved for this folder, or reopen it where you left it (see below) |
 | `relay trust`     | Trust the current folder and remember it (`--remove` to undo, `--list` to show all) |
+| `relay rooms`     | List saved rooms (`--delete <name>` deletes one for the current folder, `--workspace <path>` for another folder) |
 | `relay --version` | Print the Relay version                                  |
 | `relay --help`    | Show help                                                |
 
@@ -110,6 +112,24 @@ Relay tells a paste from typing by how fast the lines arrive, because a terminal
 or on a loaded machine — can still split, and the lines after the split are read as if you had
 typed them, so a `/command` among them runs. The line count Relay prints before it sends is how you
 see that this has happened.
+
+### Saved rooms
+
+Without `--room`, a room lives in memory and is gone when you leave. `relay start --room work`
+saves the room as it goes, and the next `relay start --room work` in the same folder opens it again:
+
+- `/history` shows what was said before, and each agent continues its own conversation where its
+  CLI still has it. An agent whose conversation cannot be continued starts a new one and is shown
+  the room again, except what `/reset` told it to forget. If an agent's CLI has dropped the
+  conversation, its next turn fails; `/restart <agent>` starts afresh.
+- Roles are saved with the room. `/pause`, `/approvals` and `/auto` always start off, and
+  `--max-turns` is whatever you start Relay with.
+- A room belongs to the folder it was started in. The same name in another folder is another room.
+- Only one Relay can have a room open at a time.
+- Saved rooms are in your local data folder, readable only by you, but not encrypted. They hold
+  everything said in the room, including anything you paste. `relay rooms --delete <name>` deletes
+  one; nothing is deleted automatically. See [docs/threat-model.md](docs/threat-model.md).
+- If a saved room cannot be read, Relay moves it aside, says where, and starts the room empty.
 
 ### One shared conversation
 
@@ -182,7 +202,8 @@ You: @claude @codex add retry to the uploader
   configuration lets it. Relay never changes what an agent is allowed to do.
 - Relay does not decide who speaks next. Roles inform the agents; the one speaking still chooses
   whether to hand over.
-- Roles last for the session, including across `/restart` and `/reset`, and are gone when Relay exits.
+- Roles last for the session, including across `/restart` and `/reset`, and are gone when Relay
+  exits, unless the room is saved with `--room`.
 
 See [docs/adr/0003-agent-roles.md](docs/adr/0003-agent-roles.md) for the design.
 
@@ -315,7 +336,7 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 
 ## MVP limitations
 
-- One room (`general`), held in memory. Nothing is persisted between runs.
+- One room per run: `general`, held in memory, or the room you name with `--room`, which is saved.
 - There are no private messages: every agent in a room sees everything said in it.
 - Because agents now read each other's replies, one agent can influence another through the room.
   See the threat model.
@@ -338,7 +359,7 @@ Both integrations were verified against Claude Code 2.1.273 and codex-cli 0.162.
 ## Near-term roadmap
 
 - Streaming the reply itself as it is written
-- Multiple rooms and persisted history
+- Several rooms open in one run
 - Packaging as a .NET global tool and native executables
 
 ## Contributing

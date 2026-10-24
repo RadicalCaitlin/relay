@@ -103,7 +103,7 @@ public sealed class StartCommandApprovalTests : IDisposable
     private (StartCommand Command, Task<int> Running) Start(AskingProvider provider, string? turnTimeout = null, params IAgentProvider[] others)
     {
         var command = new StartCommand(_console, new AgentDiscoveryService([provider, .. others]), _rooms,
-            new WorkspaceTrustPrompt(_console, new WorkspaceTrustStore(null), _keyboard), _keyboard);
+            new WorkspaceTrustPrompt(_console, new WorkspaceTrustStore(null), _keyboard), _keyboard, new RoomStore(null));
         var settings = new StartCommand.Settings { TrustWorkspace = true, TurnTimeout = turnTimeout };
         // The context is Spectre's own and Relay never reads it.
         return (command, Task.Run(() => command.ExecuteAsync(null!, settings, CancellationToken.None)));

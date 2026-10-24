@@ -17,10 +17,16 @@ internal sealed class StartCommand(
     AgentDiscoveryService discovery,
     IRoomManager rooms,
     WorkspaceTrustPrompt trustPrompt,
-    IConsoleStreams streams) : AsyncCommand<StartCommand.Settings>
+    IConsoleStreams streams,
+    RoomStore roomStore) : AsyncCommand<StartCommand.Settings>
 {
     internal sealed class Settings : CommandSettings
     {
+        // The length is stated here as a number because an attribute takes only constant text.
+        [CommandOption("--room <NAME>")]
+        [Description("Save this room and everything said in it, for this folder, and open it again where you left it the next time you start Relay with the same name. Letters, digits, - and _, up to 64. Without it nothing is saved.")]
+        public string? Room { get; init; }
+
         [CommandOption("--trust-workspace")]
         [Description("Trust the current folder for this session only: also load its own agent settings (hooks, MCP servers, CLAUDE.md), which can run commands. Use 'relay trust' to remember it.")]
         public bool TrustWorkspace { get; init; }
@@ -59,6 +65,9 @@ internal sealed class StartCommand(
                     return ValidationResult.Error($"--workspace must name a folder that exists. Not found: {RelayConsole.PlainLine(Workspace)}");
                 WorkspacePath = folder;
             }
+
+            if (Room is not null && !RoomStore.IsValidName(Room))
+                return ValidationResult.Error($"--room must be a name of letters, digits, - and _, starting with a letter or digit, up to {RoomStore.MaxNameLength} characters, such as --room auth-refactor.");
 
             if (Agents is not null && AgentIds(Agents).Count == 0)
                 return ValidationResult.Error("--agents must name at least one agent, such as --agents claude or --agents claude,codex.");
@@ -178,6 +187,7 @@ internal sealed class StartCommand(
     private string? _approvalFolder;
     private CancellationTokenSource? _question;
     private volatile AskingTurn? _asking;
+    private SavedRoom? _saved;
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
@@ -200,6 +210,22 @@ internal sealed class StartCommand(
             }
         }
 
+        SavedRoom? saved = null;
+        if (settings.Room is { } roomName)
+        {
+            try
+            {
+                saved = roomStore.Open(workspace, roomName);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                console.MarkupLine($"[red]--room: the room could not be opened. {RelayConsole.SafeLine(ex.Message)}[/]");
+                return 1;
+            }
+        }
+
+        // Released only after the agents are stopped, so no other Relay can open the room while one runs.
+        using var held = _saved = saved;
         var trust = trustPrompt.Resolve(settings.TrustWorkspace, workspace);
         _folderStatus = trust.Status;
         _turnTimeout = settings.TurnTimeout;
@@ -213,7 +239,7 @@ internal sealed class StartCommand(
         // Without a person who can both see a question and answer it, nothing is put to anyone,
         // and an agent's CLI refuses what its own settings do not allow, as it always has.
         ApprovalServer? approvals = null;
-        var room = rooms.CreateRoom("general");
+        var room = saved?.Room ?? rooms.CreateRoom("general");
         Console.CancelKeyPress += OnCancelKeyPress;
         using var terminated = PosixSignalRegistration.Create(PosixSignal.SIGTERM, OnTerminating);
         using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, OnTerminating);
@@ -250,6 +276,12 @@ internal sealed class StartCommand(
                 room.AddParticipant(AgentParticipant.Create(agent, options));
 
             WriteHeader(room);
+            if (saved is not null)
+            {
+                WriteReopened(saved);
+                saved.SaveStatusChanged += WriteSaveStatus;
+            }
+
             await RunLoopAsync(room, router, cancellationToken);
         }
         finally
@@ -869,6 +901,8 @@ internal sealed class StartCommand(
 
         console.WriteLine();
         console.MarkupLine(_folderStatus);
+        if (_saved is not null)
+            console.MarkupLine($"[dim]This room is saved for this folder, where only you can read it: {RelayConsole.SafeLine(_saved.FilePath)}. relay rooms --delete {Markup.Escape(room.Name)} deletes it.[/]");
         // Said without a terminal only when asked: there it is how Relay has always behaved.
         if (_desk is not null)
             console.MarkupLine($"[dim]{DescribeApprovals(room)}[/]");
@@ -883,6 +917,38 @@ internal sealed class StartCommand(
             console.MarkupLine($"[dim]An exchange between agents is at most {Turns(_limits.MaxTurns)}, as you asked at start-up.[/]");
         console.MarkupLine($"[bold]# {Markup.Escape(room.Name)}[/]  [dim]/help for commands[/]");
         console.WriteLine();
+    }
+
+    private void WriteReopened(SavedRoom saved)
+    {
+        if (saved.SetAside is { } aside)
+            console.MarkupLine($"[yellow]! The saved room could not be read, so it was moved to {RelayConsole.SafeLine(aside)} and this room starts empty.[/]");
+        if (!saved.Reopened)
+            return;
+
+        var count = saved.Room.Messages.Count;
+        console.MarkupLine($"[dim]Reopened with {count} message{(count == 1 ? string.Empty : "s")} from before. /history shows them.[/]");
+        foreach (var participant in saved.Room.Participants)
+        {
+            if (participant.Session is not { } session)
+                continue;
+
+            var name = Markup.Escape(participant.DisplayName);
+            console.MarkupLine(session.RemembersConversation
+                ? $"[dim]{name} continues its conversation. If it can no longer be continued, /restart {Markup.Escape(participant.Id)} starts a new one and shows it the room again.[/]"
+                : $"[dim]{name} starts a new conversation with the next message.[/]");
+        }
+
+        console.WriteLine();
+    }
+
+    // The room goes on in memory, and every save writes all of it, so the next one that works catches up.
+    private void WriteSaveStatus(Exception? failure)
+    {
+        lock (_writing)
+            console.MarkupLine(failure is null
+                ? "[dim]The room is being saved again, including what was said while it could not be.[/]"
+                : $"[yellow]! The room could not be saved: {RelayConsole.SafeLine(failure.Message)} It goes on, and Relay tries again with each change.[/]");
     }
 
     private void WriteHelp(ChatRoom room)

@@ -15,6 +15,11 @@ internal sealed class FakeSession(Func<string, CancellationToken, Task<string>> 
 
     public bool RemembersConversation { get; set; } = true;
 
+    public string? ConversationId { get; set; }
+
+    /// <summary>Whether <see cref="Resume"/> accepts a conversation from an earlier run.</summary>
+    public bool CanResume { get; set; } = true;
+
     /// <summary>What the agent reports doing during each turn, before it replies.</summary>
     public List<AgentActivity> Activity { get; } = [];
 
@@ -26,9 +31,16 @@ internal sealed class FakeSession(Func<string, CancellationToken, Task<string>> 
         return respond(message, cancellationToken);
     }
 
-    public void Reset()
+    public bool Resume(string conversationId)
     {
+        if (!CanResume)
+            return false;
+
+        ConversationId = conversationId;
+        return true;
     }
+
+    public void Reset() => ConversationId = null;
 
     public ValueTask DisposeAsync()
     {
