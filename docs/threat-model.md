@@ -9,8 +9,8 @@ Relay runs on your machine as you. For each message you address to an agent it s
 agent's CLI (`claude` or `codex`) as a child process in the folder you launched Relay from, writes
 your message to the CLI's standard input, and shows the reply. If you named several agents, it
 may then start another of them with that reply, a limited number of times. It holds no credentials, opens no
-network connections of its own, and keeps no logs. The only file it writes is its list of trusted
-folders. The agent CLIs do all of those things themselves, under their own sign-in and configuration.
+network connections of its own, and keeps no logs. It writes its list of trusted folders and, only
+for a room you name with `--room`, that room. The agent CLIs do all of those things themselves, under their own sign-in and configuration.
 
 ## Trust boundaries
 
@@ -332,13 +332,44 @@ classifier, then decides the steps Claude's settings leave open, instead of you.
 
 ## Secrets and logging
 
-- Relay has no logging. The only thing it writes to disk is the list of trusted folder paths. Room
-  history lives in memory and is gone on exit.
+- Relay has no logging. It writes the list of trusted folder paths and, only for a room you name
+  with `relay start --room`, that room (see "Saved rooms"). Any other room lives in memory and is
+  gone on exit.
 - Relay never reads the agents' credential or configuration files.
 - The agent process inherits your environment, including any API keys in it, exactly as it would
   if you ran the CLI yourself. Relay never prints or stores environment variables.
 - When a CLI fails, Relay shows the last lines of its error output (at most 400 characters) in the
   room. If a CLI ever printed a secret there, it would be shown on screen, but not saved.
+
+## Saved rooms
+
+`relay start --room <name>` saves the room as it goes, so it can be opened again later (see
+[adr/0009-saved-rooms.md](adr/0009-saved-rooms.md)). What is saved is sensitive: every message,
+including anything you pasted, and each agent's session id, which continues its conversation under
+your account when passed back to its CLI.
+
+- **Nothing is saved unless you name the room.** Plain `relay start` writes no room.
+- **Only you can read it.** Rooms are kept in `rooms` under your local data folder
+  (`%LOCALAPPDATA%\relay` on Windows, `~/.local/share/relay` on Linux,
+  `~/Library/Application Support/relay` on macOS), or under `RELAY_HOME` when that is set to an
+  absolute path. The folder is `0700` and each file `0600` on macOS and Linux. On Windows the folder
+  has an access list naming only you, which everything in it inherits, so administrators and the
+  system account are not granted access either (an administrator can still take ownership).
+- **It is not encrypted.** Any program running as you can read it, as it can read the agents' own
+  transcripts. So can a backup of your profile, or anyone with your disk outside the operating
+  system.
+- **Nothing in the working folder decides where it is.** A room's file is named from a hash of the
+  folder and the room's name, and the name is letters, digits, `-` and `_` only.
+- **A saved session id is checked again** before it reaches a command line, exactly as one read from
+  the CLI's output is. One that could be read as a flag is not used, and the agent starts a new
+  conversation.
+- **A file that does not hold together is set aside, not used.** Relay says where it moved it.
+  Activity and your answers to approval questions are never saved, and `/pause`, `/approvals` and
+  `/auto` always start off.
+- **Deleting it.** `relay rooms` lists saved rooms and `relay rooms --delete <name>` deletes one for
+  the current folder, with any copy that was set aside. Nothing is deleted automatically. Deleting a
+  file does not erase it from the disk, from backups, or from the agents' own records of the
+  conversation, which their CLIs keep in their own folders.
 
 ## Secrets in the repository
 

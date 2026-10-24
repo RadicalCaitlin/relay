@@ -23,6 +23,18 @@ public sealed partial class CliAgentSession(
     // Without an id to resume, every turn starts a new conversation in the CLI.
     public bool RemembersConversation => _sessionId is not null;
 
+    public string? ConversationId => _sessionId;
+
+    // Read back from a file, so checked again exactly as an id from the CLI's own output is.
+    public bool Resume(string conversationId)
+    {
+        if (!SafeSessionId().IsMatch(conversationId))
+            return false;
+
+        _sessionId = conversationId;
+        return true;
+    }
+
     public async Task<string> SendAsync(string message, Action<AgentActivity>? onActivity = null, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_state == AgentSessionState.Closed, this);

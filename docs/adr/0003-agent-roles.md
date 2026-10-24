@@ -119,7 +119,8 @@ produces implement-then-review when the roles say so, inside the same exchange a
 - **Custom role text is the user's, sent in Relay's voice.** It is typed by the user and never
   comes from an agent or from the folder, so it adds no new untrusted input. It is escaped like
   any other text in the introduction.
-- **Roles are lost when Relay exits**, like everything else in a room, until #13.
+- **Roles are lost when Relay exits**, like everything else in a room, unless the room is saved
+  with `--room` (ADR 0009).
 - **`coordinator` is only a description.** It works through ordinary handovers inside the turn
   limit. Nothing gives it more turns or more reach than any other agent.
 - **Tests** cover assignment, replacement and removal, the role reaching the agent on every turn

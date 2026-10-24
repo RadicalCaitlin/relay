@@ -37,7 +37,10 @@ Key types:
 - `Relay.Core.Routing`: `Mention` (parses a leading `@target`, and an agent's handover), `MessageRouter`
   (runs an exchange and reports why it stopped), `ExchangeLimits`, `SharedContext` (builds what an
   agent is sent: the room messages it has missed, then the user's message or another agent's handover).
+- `Relay.Core.Rooms`: `RoomStore` and `SavedRoom` (a room the user named with `--room`, saved per
+  folder after every change), `RoomState` (what a room remembers, from `ChatRoom.Snapshot`).
 - `Relay.Core.Workspaces`: `WorkspaceTrustStore` (which folders the user trusts).
+- `Relay.Core.Storage`: `AtomicFile` (replaces a file whole, for the trust list and saved rooms).
 - `Relay.Cli.Commands`: `WorkspaceTrustPrompt` (whether this folder is trusted, asking the user if
   it must, and what the header says about it).
 - `Relay.Cli.Ui`: `RelayConsole` (cleaning and escaping untrusted text), `ReplyRenderer` (how a
@@ -157,6 +160,8 @@ The build must stay free of warnings and the tests must pass before a change is 
 - `ReplyRendererTests` covers what is rendered and highlighted, and renders hostile and random
   text to check that the output always parses and holds only Relay's own styles. Extend it for
   every new rule.
+- `SavedRoomTests` covers saved rooms: what each agent is sent after a reopen, corrupt and
+  unreadable files, the lock, permissions and deletion. Extend it for anything new `ChatRoom` remembers.
 - `AutoModeTests` covers `/auto`: what each provider is passed and when, the mode Claude reports,
   and that a reply cannot switch it on.
 - `StartCommandApprovalTests` runs the chatroom itself in process, with a fake `IConsoleStreams`
@@ -230,6 +235,13 @@ and update it in the same change.
   Do not bypass the hook.
 - Folder trust is remembered by `WorkspaceTrustStore`, per exact folder, in the user's own
   configuration folder. Nothing in the working directory may influence where that file is read from.
+- A room is saved only when the user names it with `relay start --room`, by `RoomStore`, in a
+  folder only the user can read. Never save a room by default, and never save activity, an answer
+  to an approval question, or the state of `/pause`, `/approvals` or `/auto`. A saved session id
+  goes through `IAgentSession.Resume`, which checks it as an id from agent output is checked. A file
+  that does not hold together is set aside, never repaired or overwritten. Anything `ChatRoom`
+  remembers must raise `Changed` and appear in `Snapshot`, or it is lost on reopen. See
+  `docs/adr/0009-saved-rooms.md`.
 - Treat agent output, CLI error text and version strings as untrusted: print them only through
   `RelayConsole.Safe`, which strips control and bidirectional characters and escapes markup.
   Print folder names and anything else that must stay on one line through `RelayConsole.SafeLine`.

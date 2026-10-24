@@ -35,6 +35,7 @@ var services = new ServiceCollection()
     .AddSingleton<AgentDiscoveryService>()
     .AddSingleton<IRoomManager, InMemoryRoomManager>()
     .AddSingleton(new WorkspaceTrustStore(WorkspaceTrustStore.DefaultFilePath()))
+    .AddSingleton(new RoomStore(RoomStore.DefaultFolder()))
     .AddSingleton<IConsoleStreams, ConsoleStreams>()
     .AddSingleton<WorkspaceTrustPrompt>()
     .AddSingleton(AnsiConsole.Console);
@@ -52,6 +53,7 @@ app.Configure(config =>
     config.AddCommand<AgentsCommand>("agents").WithDescription("List agent providers and whether they are installed.");
     config.AddCommand<StartCommand>("start").WithDescription("Start an interactive chatroom.");
     config.AddCommand<TrustCommand>("trust").WithDescription("Trust the current folder, so agents load its own settings.");
+    config.AddCommand<RoomsCommand>("rooms").WithDescription("List the rooms saved with relay start --room, or delete one.");
 });
 
 return await app.RunAsync(args);

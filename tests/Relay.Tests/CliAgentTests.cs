@@ -90,6 +90,41 @@ public class CliAgentTests
     }
 
     [Fact]
+    public async Task A_conversation_from_an_earlier_run_is_continued()
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
+
+        Assert.True(session.Resume("0b5f6f1e-saved"));
+        await session.SendAsync("hello again");
+
+        Assert.True(session.RemembersConversation);
+        Assert.Equal(["--resume", "0b5f6f1e-saved"], runner.Requests[^1].Arguments.TakeLast(2));
+        Assert.Equal("ce6f4686-9f97-4a98-8fb4-3125a2b0e671", session.ConversationId);
+    }
+
+    // A saved room is a file, and its conversation id goes on the agent's command line.
+    [Theory]
+    [InlineData("--dangerously-skip-permissions")]
+    [InlineData("-resume")]
+    [InlineData("id with spaces")]
+    [InlineData("id&calc")]
+    [InlineData("")]
+    public async Task A_saved_conversation_id_that_could_be_read_as_a_flag_is_not_used(string id)
+    {
+        var runner = new FakeProcessRunner(_ => Ok(ClaudeOk));
+        var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), runner);
+        await using var session = provider.CreateSession(await provider.DiscoverAsync(), new("/work"));
+
+        Assert.False(session.Resume(id));
+        await session.SendAsync("hello");
+
+        Assert.DoesNotContain("--resume", runner.Requests[^1].Arguments);
+        Assert.DoesNotContain(id, runner.Requests[^1].Arguments);
+    }
+
+    [Fact]
     public void Claude_loads_project_settings_only_for_a_trusted_workspace()
     {
         var provider = new ClaudeProvider(new FakeLocator("/usr/bin/claude"), new FakeProcessRunner(_ => Ok(ClaudeOk)));

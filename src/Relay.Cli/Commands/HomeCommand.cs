@@ -16,6 +16,7 @@ internal sealed class HomeCommand(IAnsiConsole console, AgentDiscoveryService di
         console.WriteLine();
         console.MarkupLine("  [bold]relay start[/]     Start an interactive chatroom");
         console.MarkupLine("  [bold]relay agents[/]    List agent providers and installation status");
+        console.MarkupLine("  [bold]relay rooms[/]     List saved rooms, or delete one");
         console.MarkupLine("  [bold]relay --help[/]    Show all commands and options");
         return 0;
     }

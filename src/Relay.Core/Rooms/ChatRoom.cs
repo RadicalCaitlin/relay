@@ -1,3 +1,5 @@
+using Relay.Core.Agents;
+
 namespace Relay.Core.Rooms;
 
 /// <param name="Messages">Messages to show the agent now, oldest first.</param>
@@ -40,6 +42,30 @@ public sealed class ChatRoom(Guid id, string name)
     // conversation still holds the old instruction, so saying nothing would leave it in force.
     private readonly HashSet<AgentParticipant> _roleWithdrawn = [];
 
+    private readonly Dictionary<AgentParticipant, int> _resetAt = [];
+
+    // What an earlier run remembered about agents that have not joined this time, or have joined
+    // without a session. Kept as it was, so that saving the room does not lose it.
+    private readonly Dictionary<string, RoomAgentState> _saved = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The room as an earlier run left it. Each agent's part of it is applied as the agent joins.
+    /// </summary>
+    public static ChatRoom Restore(RoomState state)
+    {
+        var room = new ChatRoom(state.Id, state.Name);
+        room._messages.AddRange(state.Messages);
+        foreach (var agent in state.Agents)
+            room._saved[agent.Id] = agent;
+        return room;
+    }
+
+    /// <summary>
+    /// Raised, outside the room's lock, after anything the room remembers has changed. A handler must
+    /// not throw: it runs in the middle of an exchange.
+    /// </summary>
+    public event Action? Changed;
+
     public Guid Id { get; } = id;
 
     public string Name { get; } = name;
@@ -78,6 +104,59 @@ public sealed class ChatRoom(Guid id, string name)
             _participants.Add(participant);
             _seen[participant] = [];
             _sends[participant] = [];
+            if (participant.Session is { } session && _saved.Remove(participant.Id, out var saved))
+                Rejoin(participant, session, saved);
+        }
+    }
+
+    // Only a conversation the agent can continue holds what it was shown. When it cannot be continued
+    // the agent starts a new one and is shown the room again, except what /reset told it to forget.
+    private void Rejoin(AgentParticipant participant, IAgentSession session, RoomAgentState saved)
+    {
+        var resetAt = Math.Min(saved.ResetAt, _messages.Count);
+        _resetAt[participant] = resetAt;
+        if (saved.Role is { } role)
+            _roles[participant] = role;
+
+        if (saved.ConversationId is { } conversation && session.Resume(conversation))
+        {
+            _seen[participant].UnionWith(saved.Seen);
+            foreach (var (message, count) in saved.Sends)
+                _sends[participant][message] = count;
+            if (saved.RoleStated && saved.Role is not null)
+                _roleStated.Add(participant);
+            if (saved.RoleWithdrawn)
+                _roleWithdrawn.Add(participant);
+        }
+        else
+        {
+            _seen[participant].UnionWith(_messages.Take(resetAt).Select(m => m.Id));
+        }
+    }
+
+    /// <summary>Everything the room remembers, as it is now.</summary>
+    public RoomState Snapshot()
+    {
+        lock (_gate)
+        {
+            List<RoomAgentState> agents = [];
+            foreach (var participant in _participants)
+            {
+                if (participant.Session is not { } session)
+                    continue;
+
+                agents.Add(new(
+                    participant.Id,
+                    session.ConversationId,
+                    [.. _seen[participant]],
+                    new Dictionary<Guid, int>(_sends[participant]),
+                    _resetAt.GetValueOrDefault(participant),
+                    _roles.GetValueOrDefault(participant),
+                    _roleStated.Contains(participant),
+                    _roleWithdrawn.Contains(participant)));
+            }
+
+            return new(Id, Name, [.. _messages], [.. agents, .. _saved.Values]);
         }
     }
 
@@ -90,6 +169,7 @@ public sealed class ChatRoom(Guid id, string name)
     {
         var message = new ChatMessage(Guid.NewGuid(), Id, senderId, senderType, content, DateTimeOffset.UtcNow, targetId, addressLength);
         lock (_gate) _messages.Add(message);
+        Changed?.Invoke();
         return message;
     }
 
@@ -115,6 +195,7 @@ public sealed class ChatRoom(Guid id, string name)
     {
         lock (_gate)
             SeenBy(participant).UnionWith(messages.Select(m => m.Id));
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -130,6 +211,8 @@ public sealed class ChatRoom(Guid id, string name)
             foreach (var message in messages)
                 sends[message.Id] = sends.GetValueOrDefault(message.Id) + 1;
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>The role the user has given the agent in this room, if any.</summary>
@@ -161,6 +244,8 @@ public sealed class ChatRoom(Guid id, string name)
                     _roleWithdrawn.Add(participant);
             }
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -175,6 +260,8 @@ public sealed class ChatRoom(Guid id, string name)
             if (_roles.ContainsKey(participant))
                 _roleStated.Add(participant);
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>Whether a role the agent was sent has been removed and it has not completed a turn since.</summary>
@@ -195,6 +282,8 @@ public sealed class ChatRoom(Guid id, string name)
             RequireMember(participant);
             _roleWithdrawn.Remove(participant);
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -209,9 +298,12 @@ public sealed class ChatRoom(Guid id, string name)
             _sends[participant].Clear();
             _roleStated.Remove(participant);
             _roleWithdrawn.Remove(participant);
+            _resetAt[participant] = _messages.Count;
         }
 
+        // After the session has forgotten its conversation, so what is saved no longer names it.
         participant.Session?.Reset();
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -226,9 +318,11 @@ public sealed class ChatRoom(Guid id, string name)
             _sends[participant].Clear();
             _roleStated.Remove(participant);
             _roleWithdrawn.Remove(participant);
+            _resetAt[participant] = 0;
         }
 
         participant.Session?.Reset();
+        Changed?.Invoke();
     }
 
     private HashSet<Guid> SeenBy(AgentParticipant participant)
